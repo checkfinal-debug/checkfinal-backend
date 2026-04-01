@@ -1,18 +1,97 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import OpenAI from "openai";
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const OpenAI = require("openai");
 
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
+
+function safeParseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractMessageText(completion) {
+  return completion?.choices?.[0]?.message?.content?.trim() || "";
+}
+
+function normalizeResponse(parsed, language) {
+  const isEnglish = language === "en";
+
+  return {
+    publicSummary:
+      typeof parsed.publicSummary === "string" && parsed.publicSummary.trim()
+        ? parsed.publicSummary.trim()
+        : isEnglish
+        ? "The report has findings that should be reviewed by a physician."
+        : "Rapor içinde doktor tarafından değerlendirilmesi gereken bulgular vardır.",
+
+    doctorSummary:
+      typeof parsed.doctorSummary === "string" && parsed.doctorSummary.trim()
+        ? parsed.doctorSummary.trim()
+        : isEnglish
+        ? "The report contains findings that require clinical correlation."
+        : "Rapor klinik korelasyon gerektiren bulgular içermektedir.",
+
+    keyFindings: Array.isArray(parsed.keyFindings)
+      ? parsed.keyFindings.filter((x) => typeof x === "string" && x.trim()).slice(0, 8)
+      : [],
+
+    publicWarnings: Array.isArray(parsed.publicWarnings)
+      ? parsed.publicWarnings.filter((x) => typeof x === "string" && x.trim()).slice(0, 6)
+      : [],
+
+    doctorWarnings: Array.isArray(parsed.doctorWarnings)
+      ? parsed.doctorWarnings.filter((x) => typeof x === "string" && x.trim()).slice(0, 6)
+      : [],
+
+    privacyNotice:
+      typeof parsed.privacyNotice === "string" && parsed.privacyNotice.trim()
+        ? parsed.privacyNotice.trim()
+        : isEnglish
+        ? "This report contains personal health information and should be kept private."
+        : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır.",
+
+    actionPlan: {
+      urgency:
+        parsed.actionPlan &&
+        typeof parsed.actionPlan.urgency === "string" &&
+        parsed.actionPlan.urgency.trim()
+          ? parsed.actionPlan.urgency.trim()
+          : isEnglish
+          ? "Medium"
+          : "Orta",
+
+      whichDoctor:
+        parsed.actionPlan &&
+        typeof parsed.actionPlan.whichDoctor === "string" &&
+        parsed.actionPlan.whichDoctor.trim()
+          ? parsed.actionPlan.whichDoctor.trim()
+          : isEnglish
+          ? "Internal Medicine is the best first step. Hematology may also be needed if blood count abnormalities are significant."
+          : "İlk basamak olarak Dahiliye uygun olur. Kan sayımı bozuklukları belirginse Hematoloji de gerekebilir.",
+
+      whatToDoNext:
+        parsed.actionPlan &&
+        typeof parsed.actionPlan.whatToDoNext === "string" &&
+        parsed.actionPlan.whatToDoNext.trim()
+          ? parsed.actionPlan.whatToDoNext.trim()
+          : isEnglish
+          ? "Show this report to a doctor, review your symptoms together, and decide whether repeat testing or specialist evaluation is needed."
+          : "Bu raporu bir doktora gösterin, şikayetlerinizle birlikte değerlendirin ve gerekirse tekrar test veya uzman görüşü planlayın.",
+    },
+  };
+}
 
 app.get("/", (req, res) => {
   res.send("CheckFinal backend is running");
@@ -20,272 +99,259 @@ app.get("/", (req, res) => {
 
 app.post("/analyze", async (req, res) => {
   try {
-    const reportText = req.body?.reportText?.trim();
+    const reportText = typeof req.body?.reportText === "string" ? req.body.reportText.trim() : "";
     const language = req.body?.language === "en" ? "en" : "tr";
+    const isEnglish = language === "en";
 
     if (!reportText) {
       return res.status(400).json({
-        publicSummary:
-          language === "en"
-            ? "No report text was sent."
-            : "Rapor metni gönderilmedi.",
-        doctorSummary:
-          language === "en"
-            ? "No clinical report text was provided."
-            : "Klinik rapor metni sağlanmadı.",
+        publicSummary: isEnglish
+          ? "No report text was sent."
+          : "Rapor metni gönderilmedi.",
+        doctorSummary: isEnglish
+          ? "No report text provided."
+          : "Rapor metni sağlanmadı.",
         keyFindings: [],
         publicWarnings: [],
         doctorWarnings: [],
-        privacyNotice:
-          language === "en"
-            ? "This report contains personal health information and should be kept private."
-            : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır."
+        privacyNotice: isEnglish
+          ? "This report contains personal health information and should be kept private."
+          : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır.",
+        actionPlan: {
+          urgency: isEnglish ? "Medium" : "Orta",
+          whichDoctor: isEnglish ? "Internal Medicine" : "Dahiliye",
+          whatToDoNext: isEnglish
+            ? "Please upload or paste a medical report."
+            : "Lütfen bir tıbbi rapor yükleyin veya yapıştırın.",
+        },
       });
     }
 
-    const developerPrompt =
-      language === "tr"
-        ? `
-Sen klinik karar destek amaçlı çalışan ileri düzey bir tıbbi analiz asistanısın.
+    const systemPrompt = isEnglish
+      ? `
+You are CheckFinal's medical interpretation AI.
 
-GÖREVİN:
-Sana verilen laboratuvar / biyokimya / hematoloji / koagülasyon / rapor metnini yalnızca tekrar yazmak değil, gerçekten ANLAMLANDIRMAK.
+Your job is NOT to merely rewrite the report.
+Your job is to INTERPRET the report in two layers:
+1) public-friendly explanation
+2) doctor-level explanation
 
-Sadece şu JSON yapısını döndür:
+You must evaluate ALL clinically relevant abnormalities together.
+Do not focus on only one issue.
+Do not ignore low neutrophils, low lymphocytes, anemia, platelet changes, liver tests, kidney tests, inflammation, coagulation, or other meaningful findings.
+
+Return ONLY valid JSON with exactly this structure:
+
 {
-  "publicSummary": string,
-  "doctorSummary": string,
-  "keyFindings": string[],
-  "publicWarnings": string[],
-  "doctorWarnings": string[],
-  "privacyNotice": string
+  "publicSummary": "string",
+  "doctorSummary": "string",
+  "keyFindings": ["string"],
+  "publicWarnings": ["string"],
+  "doctorWarnings": ["string"],
+  "privacyNotice": "string",
+  "actionPlan": {
+    "urgency": "Low / Medium / Urgent",
+    "whichDoctor": "string",
+    "whatToDoNext": "string"
+  }
 }
 
-ÇOK ÖNEMLİ KURALLAR:
+CRITICAL RULES FOR publicSummary:
+•⁠  ⁠Use plain everyday language.
+•⁠  ⁠Explain what the important findings may mean.
+•⁠  ⁠Explain all important abnormalities together.
+•⁠  ⁠Clearly say which doctor the patient should see.
+•⁠  ⁠Clearly say whether this looks low urgency, medium urgency, or urgent.
+•⁠  ⁠Mention what the patient should do next.
+•⁠  ⁠Do not be vague.
+•⁠  ⁠Do not give a definitive diagnosis unless the report itself proves it.
+•⁠  ⁠Use safe wording like "may suggest", "can be seen with", "should be reviewed".
 
-1) publicSummary:
-•⁠  ⁠Halkın anlayacağı çok sade Türkçe ile yaz.
-•⁠  ⁠Tıbbi terim kullanırsan hemen açıklamasını ver.
-•⁠  ⁠Şu 4 soruya cevap vermeye çalış:
-  a) Bu raporda genel olarak ne dikkat çekiyor?
-  b) Bu ne anlama gelebilir?
-  c) Hasta hangi branşa başvurmalı?
-  d) Acil görünüm var mı, yok mu?
-•⁠  ⁠1 kısa paragraf + 1 kısa paragraf gibi akıcı yaz.
-•⁠  ⁠Korkutucu olma ama gereksiz yumuşatma da yapma.
-•⁠  ⁠Kesin tanı koyma.
-•⁠  ⁠"Şu olabilir", "şunu düşündürebilir", "doktor değerlendirmesi gerekir" gibi güvenli tıbbi dil kullan.
-•⁠  ⁠Halk dilinde yön ver:
-  örnek: "İç hastalıkları uzmanı ile görüşmek uygun olur."
-  örnek: "Kan değerleri için hematoloji değerlendirmesi gerekebilir."
-  örnek: "Karaciğer enzimleri için gastroenteroloji veya iç hastalıkları uygun olabilir."
-•⁠  ⁠Kısaca ne yapması gerektiğini söyle.
+CRITICAL RULES FOR doctorSummary:
+•⁠  ⁠Be more clinical and detailed.
+•⁠  ⁠Mention differential-style possibilities when appropriate.
+•⁠  ⁠Mention infection risk if neutrophils / lymphocytes / WBC suggest that.
+•⁠  ⁠Mention hematology evaluation if CBC abnormalities are significant.
+•⁠  ⁠Mention marrow suppression possibility only if reasonable.
+•⁠  ⁠Mention need for repeat CBC, smear, ferritin, iron studies, reticulocyte count, CRP, etc. when clinically appropriate.
 
-2) doctorSummary:
-•⁠  ⁠Doktora yönelik daha ayrıntılı ve klinik yaz.
-•⁠  ⁠Bulguların olası anlamını, ayırıcı tanı yönlerini, korelasyon ihtiyacını belirt.
-•⁠  ⁠Kesin tanı koyma.
-•⁠  ⁠Gerekiyorsa “iron deficiency pattern”, “hepatocellular injury pattern”, “reactive thrombocytosis”, “anemia workup”, “clinical correlation” gibi klinik anlamlı ifade kullan.
-•⁠  ⁠Daha doyurucu ve profesyonel olsun.
+CRITICAL RULES FOR keyFindings:
+•⁠  ⁠Short interpreted bullets.
+•⁠  ⁠Not raw copy-paste.
+•⁠  ⁠Example: "Low neutrophils may increase infection susceptibility."
 
-3) keyFindings:
-•⁠  ⁠Kısa, net, yorum içeren maddeler yaz.
-•⁠  ⁠Ham veriyi kör şekilde kopyalama.
-•⁠  ⁠Örnek:
-  "ALT yüksek; karaciğer hücre hasarı veya zorlanması düşündürebilir."
-  "Hemoglobin düşük; anemi ile uyumlu olabilir."
-  "Trombosit yüksek; reaktif süreç veya hematolojik nedenler açısından değerlendirilmelidir."
+CRITICAL RULES FOR publicWarnings:
+•⁠  ⁠Very practical.
+•⁠  ⁠Very simple.
+•⁠  ⁠Include doctor direction and red flag symptoms.
+•⁠  ⁠Maximum 4 bullets.
 
-4) publicWarnings:
-•⁠  ⁠Halk için aksiyon odaklı yaz.
-•⁠  ⁠Çok sade yaz.
-•⁠  ⁠En fazla 4 kısa madde olsun.
-•⁠  ⁠Özellikle şunlara değin:
-  - Hangi doktora gidilmeli?
-  - Ne zaman gidilmeli?
-  - Hangi belirti varsa gecikmeden başvurmalı?
-•⁠  ⁠Örnek:
-  "Bu sonuçlarla öncelikle iç hastalıkları doktoruna görünmek uygun olur."
-  "Nefes darlığı, göğüs ağrısı, bayılma, belirgin halsizlik varsa gecikmeyin."
-  "Karaciğer testleri için doktor ek tetkik isteyebilir."
+CRITICAL RULES FOR doctorWarnings:
+•⁠  ⁠More technical.
+•⁠  ⁠Mention limitations, red flags, follow-up needs.
+•⁠  ⁠Maximum 5 bullets.
 
-5) doctorWarnings:
-•⁠  ⁠Doktora yönelik daha teknik uyarılar yaz.
-•⁠  ⁠En fazla 5 kısa madde olsun.
-•⁠  ⁠Gerekirse ek test / korelasyon / alarm bulgusu belirt.
-
-6) privacyNotice:
-•⁠  ⁠Tek cümle kısa bir gizlilik notu.
-
-7) GENEL DAVRANIŞ:
-•⁠  ⁠Eğer veri eksikse bunu açıkça belirt.
-•⁠  ⁠Referans dışı değerleri önem sırasına göre yorumla.
-•⁠  ⁠Sayısal bulgu varsa mümkünse bağlam içinde yorumla.
-•⁠  ⁠Sonucu sadece “anormal” deyip bırakma.
-•⁠  ⁠Halk modu gerçekten halkın anlayacağı düzeyde olsun.
-•⁠  ⁠Doktor modu gerçekten daha ayrıntılı olsun.
-•⁠  ⁠Sadece JSON döndür.
-`
-        : `
-You are an advanced clinical decision-support assistant.
-
-YOUR TASK:
-Do not merely rewrite the lab report. Actually INTERPRET it.
-
-Return ONLY this JSON structure:
-{
-  "publicSummary": string,
-  "doctorSummary": string,
-  "keyFindings": string[],
-  "publicWarnings": string[],
-  "doctorWarnings": string[],
-  "privacyNotice": string
-}
-
-VERY IMPORTANT RULES:
-
-1) publicSummary:
-•⁠  ⁠Write in very plain, natural English for ordinary people.
-•⁠  ⁠Explain medical terms simply.
-•⁠  ⁠Try to answer these 4 questions:
-  a) What stands out in this report?
-  b) What could it mean?
-  c) What kind of doctor should this person see?
-  d) Does this look urgent or not urgent?
-•⁠  ⁠Write as 1-2 short readable paragraphs.
-•⁠  ⁠Do not be alarmist, but do not be vague.
-•⁠  ⁠Do not give a definite diagnosis.
-•⁠  ⁠Use safe language such as:
-  "this may suggest", "this can be seen with", "this should be reviewed by a doctor".
-•⁠  ⁠Give practical direction:
-  examples:
-  "An internal medicine doctor would be a reasonable first step."
-  "A hematology evaluation may be needed."
-  "If liver-related values are abnormal, internal medicine or gastroenterology may be appropriate."
-
-2) doctorSummary:
-•⁠  ⁠Write a more detailed clinical interpretation for a physician.
-•⁠  ⁠Mention likely significance, possible differential-style considerations, and correlation needs.
-•⁠  ⁠Do not make a definitive diagnosis unless the report is absolutely explicit.
-•⁠  ⁠Use clinically meaningful language where appropriate.
-
-3) keyFindings:
-•⁠  ⁠Write short interpreted bullet points.
-•⁠  ⁠Do not blindly copy the report.
-•⁠  ⁠Example:
-  "Elevated ALT may indicate hepatocellular injury."
-  "Low hemoglobin is compatible with anemia."
-  "Marked thrombocytosis may reflect a reactive process or a hematologic disorder."
-
-4) publicWarnings:
-•⁠  ⁠Write practical warnings for the public.
-•⁠  ⁠Maximum 4 short bullet points.
-•⁠  ⁠Focus on:
-  - which doctor to see
-  - how soon to seek care
-  - which symptoms would justify urgent care
-•⁠  ⁠Use simple language.
-
-5) doctorWarnings:
-•⁠  ⁠Write more technical cautions for clinicians.
-•⁠  ⁠Maximum 5 short bullet points.
-•⁠  ⁠Mention correlation needs, follow-up testing, red flags, or next-step workup when relevant.
-
-6) privacyNotice:
-•⁠  ⁠One short sentence.
-
-7) GENERAL BEHAVIOR:
+IMPORTANT:
+•⁠  ⁠Do not hide serious or relevant abnormalities from the public summary.
+•⁠  ⁠If more than one blood count issue exists, mention that clearly.
 •⁠  ⁠If the data is incomplete, say so clearly.
-•⁠  ⁠Prioritize the most clinically relevant abnormalities.
-•⁠  ⁠Interpret numeric values in context where possible.
-•⁠  ⁠Public mode must be clearly understandable.
-•⁠  ⁠Doctor mode must be more detailed and clinically useful.
-•⁠  ⁠Return JSON only.
+•⁠  ⁠Output JSON only.
+`
+      : `
+Sen CheckFinal için çalışan tıbbi yorumlama yapay zekâsısın.
+
+Görevin raporu sadece yeniden yazmak değildir.
+Görevin raporu 2 düzeyde ANLAMLANDIRMAKTIR:
+1) halkın anlayacağı açıklama
+2) doktor düzeyinde açıklama
+
+Tüm klinik olarak anlamlı anormallikleri birlikte değerlendir.
+Sadece tek bir soruna odaklanma.
+Düşük nötrofil, düşük lenfosit, kansızlık, trombosit değişiklikleri, karaciğer testleri, böbrek testleri, iltihap göstergeleri, pıhtılaşma testleri ve diğer anlamlı bulguları atlama.
+
+SADECE aşağıdaki yapıda geçerli JSON döndür:
+
+{
+  "publicSummary": "string",
+  "doctorSummary": "string",
+  "keyFindings": ["string"],
+  "publicWarnings": ["string"],
+  "doctorWarnings": ["string"],
+  "privacyNotice": "string",
+  "actionPlan": {
+    "urgency": "Düşük / Orta / Acil",
+    "whichDoctor": "string",
+    "whatToDoNext": "string"
+  }
+}
+
+publicSummary kuralları:
+•⁠  ⁠Halkın anlayacağı sade Türkçe kullan.
+•⁠  ⁠Önemli bulguların ne anlama gelebileceğini açıkla.
+•⁠  ⁠Bütün önemli anormallikleri birlikte anlat.
+•⁠  ⁠Hastanın hangi doktora gitmesi gerektiğini açıkça yaz.
+•⁠  ⁠Aciliyet düzeyini açıkça yaz.
+•⁠  ⁠Hastanın sonraki adımda ne yapması gerektiğini yaz.
+•⁠  ⁠Belirsiz ve boş konuşma.
+•⁠  ⁠Kesin tanı koyma.
+•⁠  ⁠"şunu düşündürebilir", "bununla görülebilir", "doktor değerlendirmesi gerekir" gibi güvenli dil kullan.
+
+doctorSummary kuralları:
+•⁠  ⁠Daha klinik ve ayrıntılı yaz.
+•⁠  ⁠Gerekirse ayırıcı tanı mantığı kullan.
+•⁠  ⁠Nötrofil / lenfosit / WBC uygunsa enfeksiyon riskini belirt.
+•⁠  ⁠CBC bozukluğu belirginse hematoloji değerlendirmesini belirt.
+•⁠  ⁠Uygunsa periferik yayma, ferritin, demir çalışmaları, retikülosit, tekrar hemogram, CRP gibi ek değerlendirme gereğini belirt.
+•⁠  ⁠Kemik iliği baskılanmasını ancak gerçekten makul ise an.
+
+keyFindings kuralları:
+•⁠  ⁠Kısa ama yorum içeren maddeler yaz.
+•⁠  ⁠Ham veri kopyalama.
+•⁠  ⁠Örnek: "Düşük nötrofil sayısı enfeksiyonlara yatkınlığı artırabilir."
+
+publicWarnings kuralları:
+•⁠  ⁠Çok pratik yaz.
+•⁠  ⁠Çok sade yaz.
+•⁠  ⁠Hangi doktora gidileceğini ve hangi belirtilerde gecikmeden başvurulması gerektiğini belirt.
+•⁠  ⁠En fazla 4 madde.
+
+doctorWarnings kuralları:
+•⁠  ⁠Daha teknik yaz.
+•⁠  ⁠Sınırlılık, kırmızı bayrak, takip gereği gibi noktaları belirt.
+•⁠  ⁠En fazla 5 madde.
+
+ÖNEMLİ:
+•⁠  ⁠Halk özetinden ciddi veya önemli bulguları gizleme.
+•⁠  ⁠Birden fazla kan sayımı sorunu varsa bunu açıkça söyle.
+•⁠  ⁠Veri eksikse açıkça yaz.
+•⁠  ⁠Sadece JSON döndür.
 `;
 
-    const response = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
       temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
-        {
-          role: "developer",
-          content: developerPrompt
-        },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `language: ${language}
-
-report:
-${reportText}`
-        }
-      ]
+          content: isEnglish
+            ? ⁠ Please analyze this medical report:\n\n${reportText} ⁠
+            : ⁠ Lütfen şu tıbbi raporu analiz et:\n\n${reportText} ⁠,
+        },
+      ],
     });
 
-    const raw = response.choices?.[0]?.message?.content || "{}";
+    const rawText = extractMessageText(completion);
+    const parsed = safeParseJSON(rawText);
 
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (parseError) {
-      console.error("JSON parse error:", parseError, raw);
+    if (!parsed) {
       return res.status(500).json({
-        publicSummary:
-          language === "en"
-            ? "The analysis response could not be processed."
-            : "Analiz yanıtı işlenemedi.",
-        doctorSummary:
-          language === "en"
-            ? "The server returned an invalid structured response."
-            : "Sunucu geçersiz yapılandırılmış bir yanıt döndürdü.",
+        publicSummary: isEnglish
+          ? "The report could not be interpreted in structured format."
+          : "Rapor yapılandırılmış biçimde yorumlanamadı.",
+        doctorSummary: isEnglish
+          ? "The structured model response could not be parsed."
+          : "Yapılandırılmış model yanıtı çözümlenemedi.",
         keyFindings: [],
-        publicWarnings: [],
-        doctorWarnings: [],
-        privacyNotice:
-          language === "en"
-            ? "This report contains personal health information and should be kept private."
-            : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır."
+        publicWarnings: [
+          isEnglish
+            ? "Please try again."
+            : "Lütfen tekrar deneyin.",
+        ],
+        doctorWarnings: [
+          isEnglish
+            ? "Backend JSON parsing failed."
+            : "Backend JSON çözümleme hatası oluştu.",
+        ],
+        privacyNotice: isEnglish
+          ? "This report contains personal health information and should be kept private."
+          : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır.",
+        actionPlan: {
+          urgency: isEnglish ? "Medium" : "Orta",
+          whichDoctor: isEnglish ? "Internal Medicine" : "Dahiliye",
+          whatToDoNext: isEnglish
+            ? "Please retry the analysis and review the report clinically."
+            : "Lütfen analizi tekrar deneyin ve raporu klinik olarak değerlendirin.",
+        },
       });
     }
 
-    return res.json({
-      publicSummary:
-        typeof parsed.publicSummary === "string" ? parsed.publicSummary : "",
-      doctorSummary:
-        typeof parsed.doctorSummary === "string" ? parsed.doctorSummary : "",
-      keyFindings: Array.isArray(parsed.keyFindings) ? parsed.keyFindings : [],
-      publicWarnings: Array.isArray(parsed.publicWarnings)
-        ? parsed.publicWarnings
-        : [],
-      doctorWarnings: Array.isArray(parsed.doctorWarnings)
-        ? parsed.doctorWarnings
-        : [],
-      privacyNotice:
-        typeof parsed.privacyNotice === "string" && parsed.privacyNotice.trim()
-          ? parsed.privacyNotice
-          : language === "en"
-          ? "This report contains personal health information and should be kept private."
-          : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır."
-    });
+    const normalized = normalizeResponse(parsed, language);
+    return res.json(normalized);
   } catch (error) {
     console.error("Analyze error:", error);
 
+    const isEnglish = req.body?.language === "en";
+
     return res.status(500).json({
-      publicSummary:
-        req.body?.language === "en"
-          ? "An error occurred during analysis."
-          : "Analiz sırasında hata oluştu.",
-      doctorSummary:
-        req.body?.language === "en"
-          ? "The server could not complete the medical interpretation."
-          : "Sunucu tıbbi yorumlamayı tamamlayamadı.",
+      publicSummary: isEnglish
+        ? "An error occurred while analyzing the report."
+        : "Rapor analiz edilirken bir hata oluştu.",
+      doctorSummary: isEnglish
+        ? "The server could not complete the clinical interpretation."
+        : "Sunucu klinik yorumlamayı tamamlayamadı.",
       keyFindings: [],
-      publicWarnings: [],
-      doctorWarnings: [],
-      privacyNotice:
-        req.body?.language === "en"
-          ? "This report contains personal health information and should be kept private."
-          : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır."
+      publicWarnings: [
+        isEnglish
+          ? "Please try again shortly."
+          : "Lütfen kısa süre sonra tekrar deneyin.",
+      ],
+      doctorWarnings: [
+        isEnglish
+          ? "Backend runtime error."
+          : "Backend çalışma hatası oluştu.",
+      ],
+      privacyNotice: isEnglish
+        ? "This report contains personal health information and should be kept private."
+        : "Bu rapor kişisel sağlık bilgileri içerir ve gizli tutulmalıdır.",
+      actionPlan: {
+        urgency: isEnglish ? "Medium" : "Orta",
+        whichDoctor: isEnglish ? "Internal Medicine" : "Dahiliye",
+        whatToDoNext: isEnglish
+          ? "Retry the request later."
+          : "İsteği daha sonra tekrar deneyin.",
+      },
     });
   }
 });
@@ -293,5 +359,5 @@ ${reportText}`
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(\⁠ CheckFinal backend running on port \${PORT}\ ⁠);
+  console.log(⁠ CheckFinal backend running on port ${PORT} ⁠);
 });

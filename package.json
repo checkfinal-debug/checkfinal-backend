@@ -2,7 +2,6 @@
   "name": "checkfinal-backend",
   "version": "1.0.0",
   "description": "CheckFinal backend",
-  "type": "module",
   "main": "server.cjs",
   "scripts": {
     "start": "node server.cjs"
