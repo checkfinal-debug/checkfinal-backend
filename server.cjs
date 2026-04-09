@@ -603,5 +603,5 @@ SADECE geçerli JSON döndür ve TAM OLARAK şu yapıyı kullan:
 });
 
 app.listen(PORT, () => {
-  console.log(\`CheckFinal backend running on port \${PORT}\`);
+  console.log(`CheckFinal backend running on port ${PORT}`);
 });
