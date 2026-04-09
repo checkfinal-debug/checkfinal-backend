@@ -6,7 +6,6 @@ const OpenAI = require("openai");
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json({ limit: "200mb" }));
 
@@ -42,6 +41,28 @@ function fallbackResponse(language = "tr") {
   };
 }
 
+// 🔥 JSON CLEANER
+function extractJSON(text) {
+  try {
+    if (!text) return null;
+
+    // ```json bloklarını temizle
+    text = text.replace(/```json/g, "").replace(/```/g, "");
+
+    // JSON başlangıcını bul
+    const firstBrace = text.indexOf("{");
+    const lastBrace = text.lastIndexOf("}");
+
+    if (firstBrace === -1 || lastBrace === -1) return null;
+
+    const jsonString = text.substring(firstBrace, lastBrace + 1);
+
+    return JSON.parse(jsonString);
+  } catch (err) {
+    return null;
+  }
+}
+
 app.post("/analyze", async (req, res) => {
   try {
     const { text, language = "tr", images = [] } = req.body;
@@ -53,7 +74,7 @@ app.post("/analyze", async (req, res) => {
     if (text && text.trim() !== "") {
       content.push({
         type: "input_text",
-        text: `Medical report / uploaded text:\n${text}`,
+        text: `Medical report:\n${text}`,
       });
     }
 
@@ -61,135 +82,65 @@ app.post("/analyze", async (req, res) => {
       images.forEach((img) => {
         content.push({
           type: "input_image",
-          image_url: {
-            url: img,
-          },
+          image_url: { url: img },
         });
       });
     }
 
     const systemPrompt = isEnglish
       ? `
-You are an AI-assisted clinical decision support system.
+You are a clinical decision support AI.
 
-STRICT RULES:
-- Do NOT diagnose
-- Do NOT give certainty
-- Do NOT hallucinate missing data
-- Clearly state limitations
-- Stay medically safe and conservative
+Rules:
+- No diagnosis
+- No certainty
+- No hallucination
+- Always mention limitations
 
-TASK:
-Generate structured medical interpretation.
-
-PUBLIC MODE:
-- Simple, clear
-- No technical overload
-
-DOCTOR MODE:
-- More detailed
-- Include clinical reasoning
-- Include possible interpretation
-- Include limitations clearly
-
-IMPORTANT:
-- If data is limited (single image, missing report), clearly say so
-- If findings are unclear, DO NOT guess
-
-OUTPUT STRICT JSON:
-{
-  "publicSummary": "...",
-  "doctorSummary": "...",
-  "keyFindings": ["..."],
-  "publicWarnings": ["..."],
-  "doctorWarnings": ["..."],
-  "privacyNotice": "...",
-  "actionPlan": {
-    "urgency": "...",
-    "whichDoctor": "...",
-    "whatToDoNext": "..."
-  }
-}
+Return ONLY JSON.
 `
       : `
-Sen yapay zekâ destekli klinik karar destek sistemisin.
+Sen klinik karar destek yapay zekasısın.
 
-KURALLAR:
+Kurallar:
 - Tanı koyma
-- Kesinlik belirtme
-- Eksik veriyi uydurma
-- Her zaman veri sınırlılığını belirt
-- Tıbbi olarak güvenli ve temkinli ol
+- Kesin konuşma
+- Veri uydurma
+- Sınırlılığı mutlaka belirt
 
-GÖREV:
-Yapılandırılmış analiz üret.
-
-HALK MODU:
-- Sade, anlaşılır
-- Teknik terim az
-
-DOKTOR MODU:
-- Daha detaylı
-- Klinik yorum içermeli
-- Veri sınırlılığı mutlaka belirtilmeli
-- Ayırıcı düşünce ima edilmeli ama kesinlik yok
-
-KRİTİK:
-- Tek görüntü / eksik veri varsa açıkça yaz
-- Emin değilsen yorum yapma
-
-JSON FORMAT:
-{
-  "publicSummary": "...",
-  "doctorSummary": "...",
-  "keyFindings": ["..."],
-  "publicWarnings": ["..."],
-  "doctorWarnings": ["..."],
-  "privacyNotice": "...",
-  "actionPlan": {
-    "urgency": "...",
-    "whichDoctor": "...",
-    "whatToDoNext": "..."
-  }
-}
+SADECE JSON döndür.
 `;
 
     const response = await openai.responses.create({
       model: "gpt-4.1",
       input: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: content,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: content },
       ],
       max_output_tokens: 1200,
     });
 
-    let outputText = response.output_text;
+    const rawText = response.output_text;
 
-    let parsed;
+    // 🔥 KRİTİK NOKTA
+    let parsed = extractJSON(rawText);
 
-    try {
-      parsed = JSON.parse(outputText);
-    } catch (e) {
+    if (!parsed) {
+      console.log("⚠️ JSON parse failed, fallback used");
       return res.json(fallbackResponse(language));
     }
 
-    // 🔥 SMART BRANCH BOOST
-    if (parsed.keyFindings && parsed.keyFindings.length > 0) {
-      const textAll = parsed.keyFindings.join(" ").toLowerCase();
+    // 🔥 BRANCH BOOST
+    if (parsed.keyFindings?.length > 0) {
+      const txt = parsed.keyFindings.join(" ").toLowerCase();
 
-      if (textAll.includes("lenf") || textAll.includes("hepatomegali")) {
+      if (txt.includes("lenf") || txt.includes("hepatomegali")) {
         parsed.actionPlan.whichDoctor = isEnglish
           ? "Internal Medicine / Hematology"
           : "İç Hastalıkları / Hematoloji";
       }
 
-      if (textAll.includes("beyin") || textAll.includes("bt")) {
+      if (txt.includes("beyin") || txt.includes("bt")) {
         parsed.actionPlan.whichDoctor = isEnglish
           ? "Neurology / Radiology"
           : "Nöroloji / Radyoloji";
