@@ -29,17 +29,23 @@ function fallbackResponse(language = "tr") {
 
   return {
     publicSummary: isEnglish
-      ? "The report could not be fully interpreted. Please try again."
-      : "Rapor yorumlanamadı. Lütfen tekrar deneyin.",
+      ? "The report could not be fully interpreted at this time. Please try again. If you have severe symptoms, seek medical care promptly."
+      : "Rapor şu anda tam olarak yorumlanamadı. Lütfen tekrar deneyin. Ciddi şikayetleriniz varsa gecikmeden sağlık kuruluşuna başvurun.",
     doctorSummary: isEnglish
-      ? "Structured interpretation could not be generated."
-      : "Yapılandırılmış yorum üretilemedi.",
-    keyFindings: [],
-    publicWarnings: [],
-    doctorWarnings: [],
+      ? "Structured interpretation could not be generated. Clinical correlation with history, examination, and original laboratory ranges is required."
+      : "Yapılandırılmış yorum üretilemedi. Klinik öykü, muayene ve orijinal laboratuvar referans aralıkları ile birlikte değerlendirme gerekir.",
+    keyFindings: isEnglish
+      ? ["The uploaded report content was received, but full analysis could not be generated."]
+      : ["Yüklenen rapor içeriği alındı ancak tam analiz üretilemedi."],
+    publicWarnings: isEnglish
+      ? ["If you have chest pain, shortness of breath, fainting, severe bleeding, or high fever, seek urgent care."]
+      : ["Göğüs ağrısı, nefes darlığı, bayılma, ciddi kanama veya yüksek ateş varsa acil değerlendirme gerekir."],
+    doctorWarnings: isEnglish
+      ? ["Manual review of the source report and images is recommended."]
+      : ["Kaynak rapor ve görüntülerin manuel gözden geçirilmesi önerilir."],
     privacyNotice: isEnglish
-      ? "Your data is processed only for this analysis."
-      : "Verileriniz yalnızca bu analiz için işlenir.",
+      ? "Your data is processed only for this analysis and should be kept private."
+      : "Verileriniz yalnızca bu analiz için işlenir ve gizli tutulmalıdır.",
   };
 }
 
@@ -58,47 +64,63 @@ app.post("/analyze", async (req, res) => {
     const reportText =
       typeof body.reportText === "string" ? body.reportText.trim() : "";
 
-    const images = Array.isArray(body.images) ? body.images : [];
+    const images = Array.isArray(body.images)
+      ? body.images.filter(
+          (img) => typeof img === "string" && img.trim().length > 0
+        )
+      : [];
 
     const selectedLanguage = body.language === "en" ? "en" : "tr";
     const isEnglish = selectedLanguage === "en";
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json(fallbackResponse(selectedLanguage));
+      return res.status(500).json({
+        ...fallbackResponse(selectedLanguage),
+        publicSummary: isEnglish
+          ? "Server configuration error: OpenAI API key is missing."
+          : "Sunucu yapılandırma hatası: OpenAI API anahtarı eksik.",
+        doctorSummary: isEnglish
+          ? "OPENAI_API_KEY is missing on the server."
+          : "Sunucuda OPENAI_API_KEY tanımlı değil.",
+      });
     }
 
     if (!reportText && images.length === 0) {
       return res.status(400).json({
-        error: isEnglish
-          ? "No content provided."
-          : "İçerik gönderilmedi.",
+        error: isEnglish ? "No content provided." : "İçerik gönderilmedi.",
       });
     }
 
-    // =========================
-    // SYSTEM PROMPT
-    // =========================
-
     const systemPrompt = isEnglish
       ? `
-You are a cautious medical decision-support assistant.
+You are a cautious medical decision-support assistant for the CheckFinal app.
+You do NOT make a definitive diagnosis.
+You must return ONLY valid JSON.
 
-You analyze BOTH:
-•⁠  ⁠medical report text
-•⁠  ⁠medical images (radiology, scans, etc.)
+You can analyze:
+1) medical report text
+2) medical images such as radiology screenshots, scans, or report photos
 
-You DO NOT diagnose.
+Your output must help in two separate levels:
+1) Public mode: plain English, easy to understand, useful for non-medical users.
+2) Doctor mode: more clinical, structured, and medically useful.
 
 Rules:
-•⁠  ⁠Use cautious language
-•⁠  ⁠Suggest possible interpretations
-•⁠  ⁠Indicate urgency: Emergency / Urgent / Routine
-•⁠  ⁠Suggest which doctor to see
-•⁠  ⁠Mention red flags
-•⁠  ⁠If uncertain → clearly say so
+- Explain what the abnormalities may suggest.
+- Clearly state which medical specialty should be consulted first.
+- Clearly state urgency as one of these: Emergency / Urgent within days / Routine follow-up.
+- Do not overstate certainty.
+- Use phrases like "may suggest", "can be associated with", "should be evaluated".
+- Mention red flags when appropriate.
+- If the data is limited, say so.
+- Keep publicSummary understandable by ordinary people.
+- Make doctorSummary more technical and clinically oriented.
+- keyFindings should contain concise findings with value + interpretation when possible.
+- publicWarnings should be practical and understandable.
+- doctorWarnings should include differential considerations, next steps, and red flags if relevant.
+- If images are provided, interpret them cautiously and say clearly when image quality or clinical context is limited.
 
-Return ONLY JSON:
-
+Return EXACTLY this JSON structure:
 {
   "publicSummary": "string",
   "doctorSummary": "string",
@@ -109,26 +131,34 @@ Return ONLY JSON:
 }
 `
       : `
-Sen dikkatli bir tıbbi karar destek asistanısın.
+Sen CheckFinal uygulaması için dikkatli çalışan bir tıbbi karar destek asistanısın.
+Kesin tanı koymuyorsun.
+Sadece geçerli JSON döndür.
 
-Hem:
-•⁠  ⁠metin
-•⁠  ⁠görüntü
+Şunları analiz edebilirsin:
+1) tıbbi rapor metni
+2) radyoloji ekran görüntüsü, tarama, rapor fotoğrafı gibi medikal görseller
 
-analiz edersin.
-
-Kesin tanı koymazsın.
+İki ayrı düzeyde çıktı üretmelisin:
+1) Halk modu: sade Türkçe, halkın anlayacağı dil, yönlendirici ve net.
+2) Doktor modu: daha klinik, daha yapılandırılmış, daha tıbbi.
 
 Kurallar:
-•⁠  ⁠Temkinli konuş
-•⁠  ⁠Olasılık belirt
-•⁠  ⁠Aciliyet belirt: Acil / Kısa sürede / Rutin
-•⁠  ⁠Branş öner
-•⁠  ⁠Kırmızı bayrakları yaz
-•⁠  ⁠Emin değilsen açıkça belirt
+- Anormal bulguların neyi düşündürebileceğini açıkla.
+- Hastanın ilk hangi branşa başvurması gerektiğini açıkça yaz.
+- Aciliyet düzeyini mutlaka şu üç kategoriden biriyle belirt:
+  Acil / Kısa sürede değerlendirme gerekir / Rutin kontrol uygun.
+- Kesin konuşma, "düşündürebilir", "ilişkili olabilir", "değerlendirilmelidir" dili kullan.
+- Uygunsa kırmızı bayrakları belirt.
+- Veri sınırlıysa bunu açıkça söyle.
+- publicSummary halkın anlayacağı kadar sade olsun.
+- doctorSummary daha teknik ve klinik olsun.
+- keyFindings alanı kısa ve net maddelerden oluşsun; mümkünse değer + yorum içersin.
+- publicWarnings uygulanabilir ve anlaşılır maddeler olsun.
+- doctorWarnings ayırıcı tanı, önerilen sonraki adım ve kırmızı bayrak bilgisi içersin.
+- Görsel varsa, görseli temkinli yorumla; görüntü kalitesi veya klinik bağlam yetersizse bunu açıkça belirt.
 
-SADECE JSON döndür:
-
+JSON biçimi TAM OLARAK şu olsun:
 {
   "publicSummary": "string",
   "doctorSummary": "string",
@@ -139,42 +169,40 @@ SADECE JSON döndür:
 }
 `;
 
-    // =========================
-    // CONTENT BUILD (TEXT + IMAGE)
-    // =========================
-
-    const content = [];
+    const userContent = [];
 
     if (reportText) {
-      content.push({
+      userContent.push({
         type: "text",
-        text: reportText,
+        text: isEnglish
+          ? `Medical report text:\n\n${reportText}`
+          : `Tıbbi rapor metni:\n\n${reportText}`,
+      });
+    } else {
+      userContent.push({
+        type: "text",
+        text: isEnglish
+          ? "Please analyze the attached medical images cautiously and return structured medical decision-support JSON."
+          : "Lütfen ekli medikal görselleri temkinli şekilde analiz et ve yapılandırılmış tıbbi karar destek JSON'u döndür.",
       });
     }
 
     images.forEach((img) => {
-      content.push({
+      userContent.push({
         type: "image_url",
         image_url: {
-          url: ⁠ data:image/jpeg;base64,${img} ⁠,
+          url: `data:image/jpeg;base64,${img}`,
         },
       });
     });
 
-    // =========================
-    // OPENAI CALL (VISION + TEXT)
-    // =========================
-
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: process.env.OPENAI_MODEL || "gpt-4o",
       temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: content,
-        },
+        { role: "user", content: userContent },
       ],
     });
 
@@ -183,28 +211,39 @@ SADECE JSON döndür:
     let parsed = {};
     try {
       parsed = JSON.parse(raw);
-    } catch (e) {
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError);
       return res.status(500).json(fallbackResponse(selectedLanguage));
     }
 
     const fallback = fallbackResponse(selectedLanguage);
 
     const responsePayload = {
-      publicSummary: parsed.publicSummary || fallback.publicSummary,
-      doctorSummary: parsed.doctorSummary || fallback.doctorSummary,
+      publicSummary:
+        typeof parsed.publicSummary === "string" && parsed.publicSummary.trim()
+          ? parsed.publicSummary.trim()
+          : fallback.publicSummary,
+      doctorSummary:
+        typeof parsed.doctorSummary === "string" && parsed.doctorSummary.trim()
+          ? parsed.doctorSummary.trim()
+          : fallback.doctorSummary,
       keyFindings: toArray(parsed.keyFindings),
       publicWarnings: toArray(parsed.publicWarnings),
       doctorWarnings: toArray(parsed.doctorWarnings),
-      privacyNotice: parsed.privacyNotice || fallback.privacyNotice,
+      privacyNotice:
+        typeof parsed.privacyNotice === "string" && parsed.privacyNotice.trim()
+          ? parsed.privacyNotice.trim()
+          : fallback.privacyNotice,
     };
 
     return res.json(responsePayload);
   } catch (error) {
     console.error("Analyze error:", error);
-    return res.status(500).json(fallbackResponse("tr"));
+    const language = req.body && req.body.language === "en" ? "en" : "tr";
+    return res.status(500).json(fallbackResponse(language));
   }
 });
 
 app.listen(PORT, () => {
-  console.log(⁠ CheckFinal backend running on port ${PORT} ⁠);
+  console.log(`CheckFinal backend running on port ${PORT}`);
 });
