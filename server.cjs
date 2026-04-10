@@ -1,718 +1,485 @@
-require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
+const dotenv = require("dotenv");
+const OpenAI = require("openai");
+
+dotenv.config();
 
 const app = express();
+app.use(cors());
+app.use(express.json({ limit: "25mb" }));
 
-const PORT = Number(process.env.PORT || 3000);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4";
-const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 60000);
-const MAX_BODY_SIZE = process.env.MAX_BODY_SIZE || "25mb";
-const MAX_IMAGES = Number(process.env.MAX_IMAGES || 8);
-const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
-const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 20);
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
+const PORT = process.env.PORT || 3000;
 
-app.disable("x-powered-by");
-app.use(cors({ origin: ALLOWED_ORIGIN === "*" ? true : ALLOWED_ORIGIN }));
-app.use(express.json({ limit: MAX_BODY_SIZE }));
-app.use(express.urlencoded({ extended: true, limit: MAX_BODY_SIZE }));
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-const rateStore = new Map();
-
-function getFetch() {
-  if (typeof fetch === "function") return fetch;
-  return (...args) => import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args));
+function safeString(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function nowIso() {
-  return new Date().toISOString();
+function toStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
-function log(level, message, meta = {}) {
-  console[level](`[${nowIso()}] ${message}`, meta);
+function normalizeLanguage(value) {
+  return value === "en" ? "en" : "tr";
 }
 
-function rateLimit(req, res, next) {
-  const ip =
-    req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
-    req.socket?.remoteAddress ||
-    "unknown";
+function normalizeImages(body) {
+  const rawImages = []
+    .concat(Array.isArray(body.images) ? body.images : [])
+    .concat(Array.isArray(body.imageDataUrls) ? body.imageDataUrls : []);
 
-  const now = Date.now();
-  const entry = rateStore.get(ip) || { count: 0, start: now };
-
-  if (now - entry.start > RATE_LIMIT_WINDOW_MS) {
-    entry.count = 0;
-    entry.start = now;
-  }
-
-  entry.count += 1;
-  rateStore.set(ip, entry);
-
-  if (entry.count > RATE_LIMIT_MAX) {
-    return res.status(429).json({
-      error: "Çok fazla istek gönderildi. Lütfen kısa süre sonra tekrar deneyin."
-    });
-  }
-
-  next();
-}
-
-app.use(rateLimit);
-
-function safeString(value, fallback = "") {
-  if (typeof value !== "string") return fallback;
-  const cleaned = value.replace(/\u0000/g, "").trim();
-  return cleaned || fallback;
-}
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function dedupeStrings(arr, max = 8) {
-  const out = [];
-  const seen = new Set();
-
-  for (const item of safeArray(arr)) {
-    const text = safeString(item);
-    if (!text) continue;
-    const key = text.toLocaleLowerCase("tr");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= max) break;
-  }
-
-  return out;
-}
-
-function truncateText(text, max = 16000) {
-  const clean = safeString(text);
-  return clean.length > max ? clean.slice(0, max) : clean;
-}
-
-function normalizeLanguage(input) {
-  const lang = safeString(input, "tr").toLowerCase();
-  if (lang.startsWith("en")) return "en";
-  return "tr";
-}
-
-function normalizeImages(rawImages) {
-  const images = safeArray(rawImages)
-    .map((x) => safeString(x))
+  return rawImages
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim())
     .filter(Boolean)
-    .filter((x) => /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(x) || /^https?:\/\//.test(x))
-    .slice(0, MAX_IMAGES);
-
-  return images;
+    .map((item) => {
+      if (item.startsWith("data:image/")) {
+        return item;
+      }
+      return `data:image/jpeg;base64,${item}`;
+    });
 }
 
-function normalizeInputBody(body) {
-  const textCandidates = [
-    body?.inputText,
-    body?.text,
-    body?.content,
-    body?.reportText,
-    body?.preparedText,
-    body?.rawText
-  ];
+function inferUrgencyText(raw, isEnglish) {
+  const text = safeString(raw).toLowerCase();
 
-  const imageCandidates = [
-    ...safeArray(body?.images),
-    ...safeArray(body?.imageDataUrls),
-    ...safeArray(body?.imageUrls)
-  ];
-
-  const text = truncateText(textCandidates.map((x) => safeString(x)).filter(Boolean).join("\n\n"));
-  const images = normalizeImages(imageCandidates);
-  const selectedLanguage = normalizeLanguage(body?.selectedLanguage || body?.language || "tr");
-
-  return { text, images, selectedLanguage };
-}
-
-function chooseDoctor(text) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-
-  if (/\banemi\b|\bhemoglobin\b|\bhgb\b|\bdemir\b|\bfe\b|\bferritin\b|\bb12\b/.test(t)) {
-    return "Hematoloji";
+  if (
+    text.includes("acil") ||
+    text.includes("urgent") ||
+    text.includes("emergency") ||
+    text.includes("should not be delayed") ||
+    text.includes("geciktirilmemelidir")
+  ) {
+    return isEnglish
+      ? "A physician review should not be delayed, especially if symptoms are increasing or red-flag findings are present."
+      : "Özellikle belirtiler artıyorsa veya kırmızı bayrak bulguları varsa hekim değerlendirmesi geciktirilmemelidir.";
   }
 
   if (
-    /\bkaraciğer\b|\balt\b|\bast\b|\bggt\b|\balp\b|\bbilirubin\b|\bhepat\b|\baciğer\b/.test(t)
+    text.includes("yakın") ||
+    text.includes("kısa sürede") ||
+    text.includes("near-term") ||
+    text.includes("soon") ||
+    text.includes("within days") ||
+    text.includes("prompt")
   ) {
-    return "Gastroenteroloji";
+    return isEnglish
+      ? "Near-term specialist evaluation is appropriate according to the overall findings and symptom course."
+      : "Genel bulgular ve belirtilerin seyrine göre yakın zamanda uzman değerlendirmesi uygundur.";
   }
 
-  if (
-    /\bsafra\b|\bkolesist\b|\bkolesistektomi\b|\bsludge\b|\btaş\b|\bgallbladder\b|\bchole/.test(t)
-  ) {
-    return "Genel Cerrahi";
-  }
-
-  if (/\bakciğer\b|\btoraks\b|\bpulmoner\b|\bpnömon\b|\bnefes\b|\böksür/.test(t)) {
-    return "Göğüs Hastalıkları";
-  }
-
-  return "İç Hastalıkları";
+  return isEnglish
+    ? "Routine follow-up may be appropriate depending on symptoms, examination, and prior test results."
+    : "Belirtiler, muayene ve önceki tetkiklerle birlikte değerlendirilerek rutin kontrol uygun olabilir.";
 }
 
-function chooseUrgency(text) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-
-  if (
-    /\bşiddetli ağrı\b|\bdayanılmaz ağrı\b|\bsarılık\b|\bkanama\b|\bsiyah dışkı\b|\bhematemez\b|\bbayılma\b|\bnefes darlığı\b|\bsepsis\b|\bperitonit\b|\bobstrüksiyon\b/.test(
-      t
-    )
-  ) {
-    return "Acil değerlendirme gerekebilir";
-  }
-
-  if (/\bameliyat\b|\boperasyon\b|\bkolesistektomi\b|\bpersistan\b|\byüksek\b|\banemi\b|\balt\b|\bast\b/.test(t)) {
-    return "Geciktirilmeden hekim değerlendirmesi önerilir";
-  }
-
-  return "Klinik duruma göre yakın zamanda hekim değerlendirmesi önerilir";
-}
-
-function detectKeyFindings(text, hasImages) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-  const findings = [];
-
-  if (/\bsafra\b|\bsludge\b|\btaş\b|\bkolesist\b/.test(t)) findings.push("Safra kesesi ve safra sistemi ile ilişkili bulgular dikkat çekmektedir.");
-  if (/\banemi\b|\bhemoglobin\b|\bhgb\b|\bdemir\b|\bferritin\b/.test(t)) findings.push("Anemi veya demir eksikliği ile uyumlu laboratuvar ifadeleri bulunmaktadır.");
-  if (/\bb12\b|\bfolat\b/.test(t)) findings.push("Beslenme veya emilim ile ilişkili vitamin eksikliği olasılığı değerlendirilmelidir.");
-  if (/\bkaraciğer\b|\balt\b|\bast\b|\bggt\b|\balp\b|\bbilirubin\b/.test(t)) findings.push("Karaciğer testleri veya hepatobiliyer sistemle ilişkili değerlendirme gerektiren ifadeler vardır.");
-  if (/\breflü\b|\bgastrit\b|\bülser\b|\banastomoz\b|\broux\b|\bgastrektomi\b/.test(t)) findings.push("Üst gastrointestinal sistem ve cerrahi öykü ile ilişkili ek değerlendirme ihtiyacı olabilir.");
-  if (/\bmri\b|\bmr\b|\busg\b|\bultrason\b|\btomografi\b|\bct\b/.test(t)) findings.push("Görüntüleme verileri klinik tablo ile birlikte yorumlanmalıdır.");
-  if (hasImages) findings.push("Görüntü girdileri de değerlendirmeye dahil edilmiştir.");
-  if (findings.length === 0) findings.push("Yüklenen içerikte klinik değerlendirme gerektiren ifadeler bulunmaktadır.");
-
-  return dedupeStrings(findings, 8);
-}
-
-function buildPublicWarnings(text) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-  const warnings = [];
-
-  warnings.push("Bu çıktı yalnızca yüklenen veriler üzerinden oluşturulan ön değerlendirme niteliğindedir.");
-
-  if (/\banemi\b|\bdemir\b|\bb12\b/.test(t)) {
-    warnings.push("Halsizlik, çarpıntı, nefes darlığı veya belirgin güçsüzlük varsa hekim değerlendirmesi geciktirilmemelidir.");
-  }
-
-  if (/\bsafra\b|\bkarın ağrısı\b|\btaş\b|\bkolesist\b/.test(t)) {
-    warnings.push("Şiddetli karın ağrısı, ateş, sarılık veya kusma gelişirse acil değerlendirme gerekebilir.");
-  }
-
-  if (/\bülser\b|\breflü\b|\bkanama\b/.test(t)) {
-    warnings.push("Siyah dışkı, kusmukta kan veya giderek artan mide yakınmaları varsa hızlı tıbbi değerlendirme gerekir.");
-  }
-
-  warnings.push("Kesin tanı ve tedavi planı için hekim muayenesi ve resmi raporlarla birlikte değerlendirme yapılmalıdır.");
-
-  return dedupeStrings(warnings, 6);
-}
-
-function buildDoctorWarnings(text) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-  const warnings = [];
-
-  warnings.push("AI çıktısı klinik korelasyon ve resmi rapor doğrulaması olmadan kesin karar amacıyla kullanılmamalıdır.");
-
-  if (/\banemi\b|\bdemir\b|\bb12\b/.test(t)) {
-    warnings.push("Persistan anemi, demir/B12 eksikliği, emilim bozukluğu, kronik kan kaybı ve postoperatif beslenme yetersizliği açısından birlikte ele alınmalıdır.");
-  }
-
-  if (/\balt\b|\bast\b|\bkaraciğer\b|\bhepat\b/.test(t)) {
-    warnings.push("Hepatobiliyer enzim değişiklikleri için trend, ilaç öyküsü, cerrahi öykü ve görüntüleme uyumu değerlendirilmelidir.");
-  }
-
-  if (/\bsafra\b|\btaş\b|\bsludge\b|\bkolesistektomi\b/.test(t)) {
-    warnings.push("Safra sistemi bulguları ve cerrahi öykü mevcutsa komplikasyon, rezidüel patoloji veya eşlik eden üst GİS sorunları dışlanmalıdır.");
-  }
-
-  warnings.push("Eksik veri, tarih uyumsuzluğu veya tekil laboratuvar değerleri aşırı yorumlanmamalıdır.");
-
-  return dedupeStrings(warnings, 7);
-}
-
-function buildWhatToDoNext(text, doctor) {
-  const t = (safeString(text) || "").toLocaleLowerCase("tr");
-
-  if (doctor === "Hematoloji") {
-    return "Hemogram ve demir parametrelerinin güncel trendi gözden geçirilmeli; B12, ferritin ve gerekirse gizli kan kaybı açısından hekim planına göre ileri değerlendirme yapılmalıdır.";
-  }
-
-  if (doctor === "Gastroenteroloji") {
-    return "Karaciğer testleri ve hepatobiliyer sistem bulguları güncel klinik durumla birlikte yeniden değerlendirilmelidir; ilaç öyküsü, görüntüleme ve gerekirse ek tetkik planı hekim tarafından belirlenmelidir.";
-  }
-
-  if (doctor === "Genel Cerrahi") {
-    return "Safra sistemi ve cerrahi öykü birlikte ele alınmalı; artan ağrı, ateş, sarılık veya kusma varsa gecikmeden hekim değerlendirmesi yapılmalıdır.";
-  }
-
-  if (doctor === "Göğüs Hastalıkları") {
-    return "Solunumsal bulgular mevcutsa muayene, oksijenasyon ve uygun görüntüleme ile hekim değerlendirmesi planlanmalıdır.";
-  }
-
-  if (/\bülser\b|\breflü\b|\banastomoz\b/.test(t)) {
-    return "Mevcut gastrointestinal yakınmalar, beslenme durumu ve laboratuvar değişiklikleri birlikte değerlendirilerek İç Hastalıkları veya Gastroenteroloji üzerinden takip planı oluşturulmalıdır.";
-  }
-
-  return "Mevcut bulgular resmi raporlar ve klinik öykü ile birlikte hekim tarafından yeniden değerlendirilmelidir; gerekirse ilgili branşlara yönlendirme yapılmalıdır.";
-}
-
-function buildFallbackAnalysis({ text, images, selectedLanguage }) {
-  const combined = safeString(text);
-  const hasImages = images.length > 0;
-  const doctor = chooseDoctor(combined);
-  const urgency = chooseUrgency(combined);
-  const findings = detectKeyFindings(combined, hasImages);
-  const publicWarnings = buildPublicWarnings(combined);
-  const doctorWarnings = buildDoctorWarnings(combined);
-
-  const publicSummaryTr =
-    [
-      "Yüklenen içerik, tek başına kesin tanı koydurmayan ancak klinik değerlendirme gerektirebilecek birden fazla bulgu içermektedir.",
-      findings.length ? `Öne çıkan noktalar arasında ${findings.join(" ")}` : "",
-      hasImages ? "Görüntü girdileri de metinle birlikte dikkate alınmıştır." : "",
-      "Bu sonuç, yalnızca ön bilgilendirme ve karar desteği amaçlıdır; muayene, resmi rapor ve hekim yorumu ile birlikte ele alınmalıdır."
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-  const doctorSummaryTr =
-    [
-      "Yüklenen veri sınırlı olmakla birlikte içerikte klinik korelasyon gerektiren ifadeler bulunmaktadır.",
-      findings.join(" "),
-      "Çıktı, tanı koydurucu değil; problem listesi, trend analizi, semptom şiddeti, fizik muayene ve resmi rapor doğrulaması ile birlikte yorumlanmalıdır.",
-      `Öncelikli branş yönlendirmesi olarak ${doctor} önerilmiştir.`
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-  const publicSummaryEn =
-    [
-      "The uploaded content contains findings that do not establish a diagnosis on their own but may warrant clinical evaluation.",
-      findings.length ? `Key points include: ${findings.join(" ")}` : "",
-      hasImages ? "Image inputs were considered together with the text." : "",
-      "This output is intended only for preliminary information and decision support and should be interpreted together with formal reports and clinician evaluation."
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-  const doctorSummaryEn =
-    [
-      "Although the uploaded data is limited, it contains statements that warrant clinical correlation.",
-      findings.join(" "),
-      "This output is not diagnostic; it should be interpreted with problem-list framing, trend review, symptom severity, examination findings, and formal report validation.",
-      `Primary specialty direction: ${doctor}.`
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-  const tr = selectedLanguage === "tr";
+function buildFallbackResponse(language = "tr") {
+  const isEnglish = language === "en";
 
   return {
-    publicSummary: tr ? publicSummaryTr : publicSummaryEn,
-    doctorSummary: tr ? doctorSummaryTr : doctorSummaryEn,
-    keyFindings: findings,
-    publicWarnings,
-    doctorWarnings,
-    privacyNotice: tr
-      ? "Bu çıktı yalnızca yüklenen veriler üzerinden oluşturulan yapay zekâ destekli ön değerlendirme niteliğindedir. Kesin tanı, tedavi kararı veya hekim muayenesinin yerine geçmez."
-      : "This output is an AI-assisted preliminary assessment generated only from uploaded content. It does not replace diagnosis, treatment planning, or clinician evaluation.",
+    publicSummary: isEnglish
+      ? "The uploaded medical content could not be interpreted reliably at this time. Please try again with clearer text or images. If symptoms are significant, seek medical evaluation."
+      : "Yüklenen tıbbi içerik bu aşamada güvenilir şekilde yorumlanamadı. Daha net metin veya görüntülerle tekrar deneyin. Yakınmalar belirginse hekim değerlendirmesine başvurun.",
+    doctorSummary: isEnglish
+      ? "Structured interpretation could not be generated. Correlation with the original report, clinical history, physical examination, and prior results is required."
+      : "Yapılandırılmış yorum oluşturulamadı. Orijinal rapor, klinik öykü, fizik muayene ve önceki sonuçlarla birlikte değerlendirme gerekir.",
+    keyFindings: isEnglish
+      ? ["No reliable structured extraction could be completed from the uploaded material."]
+      : ["Yüklenen içerikten güvenilir yapılandırılmış çıkarım tamamlanamadı."],
+    publicWarnings: isEnglish
+      ? ["If you have severe pain, shortness of breath, fainting, confusion, or rapid worsening, seek urgent care."]
+      : ["Şiddetli ağrı, nefes darlığı, bayılma, bilinç değişikliği veya hızlı kötüleşme varsa acil değerlendirme gerekir."],
+    doctorWarnings: isEnglish
+      ? ["Manual review of the original report and full clinical correlation are recommended."]
+      : ["Orijinal raporun manuel incelenmesi ve tam klinik korelasyon önerilir."],
+    privacyNotice: isEnglish
+      ? "This report is for informational and decision-support purposes only. It does not replace physician evaluation."
+      : "Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesinin yerine geçmez.",
     actionPlan: {
-      urgency,
-      whichDoctor: doctor,
-      whatToDoNext: buildWhatToDoNext(combined, doctor)
-    }
+      urgency: isEnglish
+        ? "A physician review should be arranged according to symptom severity and the quality of the uploaded material."
+        : "Belirtilerin şiddetine ve yüklenen içeriğin kalitesine göre hekim değerlendirmesi planlanmalıdır.",
+      whichDoctor: isEnglish ? "Internal Medicine" : "İç Hastalıkları",
+      whatToDoNext: isEnglish
+        ? "Repeat the upload with clearer documents or images, compare with prior records, and arrange physician follow-up."
+        : "Daha net belge veya görüntülerle tekrar yükleme yapın, önceki kayıtlarla karşılaştırın ve hekim kontrolü planlayın.",
+    },
   };
 }
 
-function normalizeAnalysis(raw, fallback, sourceText) {
-  const out = raw && typeof raw === "object" ? raw : {};
-  const fallbackDoctor = chooseDoctor(sourceText);
-  const normalized = {
-    publicSummary: safeString(out.publicSummary, fallback.publicSummary),
-    doctorSummary: safeString(out.doctorSummary, fallback.doctorSummary),
-    keyFindings: dedupeStrings(out.keyFindings, 8),
-    publicWarnings: dedupeStrings(out.publicWarnings, 7),
-    doctorWarnings: dedupeStrings(out.doctorWarnings, 8),
-    privacyNotice: safeString(out.privacyNotice, fallback.privacyNotice),
+function normalizeWhichDoctor(raw, language) {
+  const isEnglish = language === "en";
+  const text = safeString(raw);
+
+  if (!text) {
+    return isEnglish ? "Internal Medicine" : "İç Hastalıkları";
+  }
+
+  const lower = text.toLowerCase();
+
+  if (
+    lower.includes("hematolog") ||
+    lower.includes("hematology") ||
+    lower.includes("hematoloji")
+  ) {
+    return isEnglish ? "Hematology" : "Hematoloji";
+  }
+
+  if (
+    lower.includes("gastro") ||
+    lower.includes("hepatology") ||
+    lower.includes("hepatoloji") ||
+    lower.includes("gastroenteroloji")
+  ) {
+    return isEnglish ? "Gastroenterology" : "Gastroenteroloji";
+  }
+
+  if (
+    lower.includes("general surgery") ||
+    lower.includes("cerrahi") ||
+    lower.includes("surgery") ||
+    lower.includes("genel cerrahi")
+  ) {
+    return isEnglish ? "General Surgery" : "Genel Cerrahi";
+  }
+
+  if (
+    lower.includes("neurology") ||
+    lower.includes("nöroloji") ||
+    lower.includes("neurolog") ||
+    lower.includes("nörolog")
+  ) {
+    return isEnglish ? "Neurology" : "Nöroloji";
+  }
+
+  if (
+    lower.includes("pulmon") ||
+    lower.includes("chest") ||
+    lower.includes("göğüs") ||
+    lower.includes("respiratory")
+  ) {
+    return isEnglish ? "Chest Diseases" : "Göğüs Hastalıkları";
+  }
+
+  if (
+    lower.includes("cardio") ||
+    lower.includes("kardiyo") ||
+    lower.includes("cardiology") ||
+    lower.includes("kardiyoloji")
+  ) {
+    return isEnglish ? "Cardiology" : "Kardiyoloji";
+  }
+
+  return text;
+}
+
+function sanitizeSummaryText(text) {
+  return safeString(text)
+    .replace(/\b(adlı hasta|hasta adı|patient name|named patient)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeResponse(parsed, language) {
+  const fallback = buildFallbackResponse(language);
+  const isEnglish = language === "en";
+
+  const publicSummary = sanitizeSummaryText(parsed.publicSummary) || fallback.publicSummary;
+  const doctorSummary = sanitizeSummaryText(parsed.doctorSummary) || fallback.doctorSummary;
+
+  const keyFindings = toStringArray(parsed.keyFindings);
+  const publicWarnings = toStringArray(parsed.publicWarnings);
+  const doctorWarnings = toStringArray(parsed.doctorWarnings);
+
+  const privacyNotice =
+    safeString(parsed.privacyNotice) || fallback.privacyNotice;
+
+  const actionPlan = parsed.actionPlan && typeof parsed.actionPlan === "object"
+    ? parsed.actionPlan
+    : {};
+
+  const urgency = inferUrgencyText(actionPlan.urgency, isEnglish);
+  const whichDoctor = normalizeWhichDoctor(actionPlan.whichDoctor, language);
+  const whatToDoNext =
+    safeString(actionPlan.whatToDoNext) || fallback.actionPlan.whatToDoNext;
+
+  return {
+    publicSummary,
+    doctorSummary,
+    keyFindings: keyFindings.length ? keyFindings : fallback.keyFindings,
+    publicWarnings: publicWarnings.length ? publicWarnings : fallback.publicWarnings,
+    doctorWarnings: doctorWarnings.length ? doctorWarnings : fallback.doctorWarnings,
+    privacyNotice,
     actionPlan: {
-      urgency: safeString(out?.actionPlan?.urgency, fallback.actionPlan.urgency),
-      whichDoctor: fallbackDoctor,
-      whatToDoNext: safeString(out?.actionPlan?.whatToDoNext, fallback.actionPlan.whatToDoNext)
-    }
+      urgency,
+      whichDoctor,
+      whatToDoNext,
+    },
   };
-
-  if (!normalized.keyFindings.length) normalized.keyFindings = fallback.keyFindings;
-  if (!normalized.publicWarnings.length) normalized.publicWarnings = fallback.publicWarnings;
-  if (!normalized.doctorWarnings.length) normalized.doctorWarnings = fallback.doctorWarnings;
-
-  return normalized;
 }
 
 function buildDeveloperPrompt(language) {
-  const isTr = language === "tr";
+  const isEnglish = language === "en";
 
-  if (isTr) {
+  if (isEnglish) {
     return `
-Sen CheckFinal için çalışan production-grade bir klinik karar destek motorusun.
+You are a production-grade medical decision-support engine for the CheckFinal mobile app.
 
-KESİN KURALLAR:
-- Asla tanı koyma.
-- Asla kesin hüküm verme.
-- Klinik olarak güçlü ama güvenli dil kullan.
-- Uygun kalıplar: "uyumlu olabilir", "düşündürebilir", "değerlendirme gerekir", "klinik korelasyon önerilir", "hekim tarafından ele alınmalıdır".
-- Uygun olmayan kalıplar: "kesin vardır", "tanı şudur", "net olarak", "mutlaka".
-- Markdown yok.
-- JSON dışı tek karakter bile üretme.
-- Null üretme.
-- Her alan dolu olsun.
-- Aynı veriye aynı mantıkla yaklaş.
-- Eksik veri varsa bunu abartmadan belirt.
-- Halk Modu metni sade ama yüzeysel olmayan, açıklayıcı, premium hissi veren uzunlukta olsun.
-- Doktor Modu metni daha teknik, daha sistematik, daha derin olsun.
-- Halk Modu teknik jargonla dolu olmasın; anlaşılır Türkçe kullan.
-- Doktor Modu, problem listesi mantığıyla yazılsın; klinik korelasyon vurgulansın.
-- Bulguları tekrar edip durma; sentez yap.
-- Gereksiz korku üretme.
-- Görüntü ve metin birlikte geldiyse birlikte değerlendir. Yalnız görüntü varsa da çalış. Yalnız metin varsa da çalış.
-- Yalnız yüklenen verilere dayan. Veri dışı uydurma yapma.
-- Aciliyet ifadesini sayısallaştırma, risk skoru verme.
-- Kırmızı bayrak gerektirebilecek durum varsa bunu güvenli dille belirt.
-- Branş seçiminde öncelik kuralı uygula:
-  1) anemi / hemoglobin / demir / ferritin / B12 baskınsa -> Hematoloji
-  2) karaciğer / ALT / AST / hepatobiliyer baskınsa -> Gastroenteroloji
-  3) safra / taş / sludge / kolesist / kolesistektomi baskınsa -> Genel Cerrahi
-  4) akciğer / toraks / pnömoni / nefes darlığı baskınsa -> Göğüs Hastalıkları
-  5) aksi halde -> İç Hastalıkları
-- Birden fazla sistem etkilenmişse summary içinde multidisipliner değerlendirme ihtimalini belirt ama actionPlan.whichDoctor alanında tek ana branş yaz.
-- publicWarnings halkın anlayacağı dilde olsun.
-- doctorWarnings daha klinik ve ayırıcı düşünceye açık olsun.
-- privacyNotice profesyonel ve kısa olsun.
-- actionPlan.whatToDoNext net aksiyon cümlesi olsun.
-- Asla boş array döndürme; gerekli ise güvenli ve genel maddeler üret.
+Return ONLY valid JSON and match this exact schema:
+{
+  "publicSummary": "string",
+  "doctorSummary": "string",
+  "keyFindings": ["string"],
+  "publicWarnings": ["string"],
+  "doctorWarnings": ["string"],
+  "privacyNotice": "string",
+  "actionPlan": {
+    "urgency": "string",
+    "whichDoctor": "string",
+    "whatToDoNext": "string"
+  }
+}
+
+Hard rules:
+- Never output markdown.
+- Never output commentary outside JSON.
+- Never use null.
+- Do not include patient names or identifying details.
+- Do not make a definitive diagnosis.
+- Use interpretive medical language such as "may suggest", "is compatible with", "requires evaluation", "should be correlated clinically".
+- Public mode must remain fluent, premium, explanatory, and understandable. Do NOT oversimplify into short shallow text.
+- Doctor mode must be more technical, more detailed, and clinically structured.
+- Extract from both report text and images if present.
+- If images are limited or partial, explicitly state that image-based interpretation is limited.
+- Be internally consistent. Similar patterns should yield similar logic and tone.
+
+Public summary rules:
+- 4 to 7 sentences.
+- Clear and premium-sounding.
+- Explain findings in a patient-understandable way without sounding childish.
+
+Doctor summary rules:
+- More detailed than public summary.
+- Mention likely systems involved when supported by input: hematologic, hepatobiliary, gastrointestinal, pulmonary, endocrine, renal, neurologic, radiologic, inflammatory, infectious, etc.
+- Mention differential framing when appropriate.
+- Mention correlation with prior imaging/labs/clinical course when appropriate.
+
+keyFindings rules:
+- Short bullet-style items.
+- Concrete findings only.
+- Prefer values or named abnormalities where available.
+
+publicWarnings rules:
+- Patient-friendly.
+- No panic language.
+- No absolute diagnosis.
+
+doctorWarnings rules:
+- More technical.
+- Mention red flags, follow-up needs, trend assessment, differential considerations, or limits of the data.
+
+privacyNotice:
+"This report is for informational and decision-support purposes only. It does not replace physician evaluation."
+
+actionPlan rules:
+- urgency must be a sentence, not a one-word label.
+- whichDoctor must be the single most appropriate first specialty.
+- whatToDoNext must be actionable and specific.
+- Prefer common first-line specialties when appropriate:
+  Internal Medicine, Hematology, Gastroenterology, General Surgery, Chest Diseases, Neurology, Cardiology.
+
+Consistency examples:
+- Iron deficiency / low HGB / low HCT -> mention anemia-compatible picture and follow-up.
+- Elevated ALT/AST/GGT / fatty liver / hepatomegaly -> mention hepatobiliary evaluation.
+- Gallbladder stones / chronic cholecystitis -> mention general surgery or gastroenterology depending context.
+- Thrombocytosis / adenopathy / organomegaly -> consider hematology.
+- Limited CT screenshot only -> state limitation; do not overcall.
+
+If the material is limited, still return a useful structured result instead of refusing.
 `;
   }
 
   return `
-You are a production-grade clinical decision support engine for CheckFinal.
+Sen CheckFinal mobil uygulaması için çalışan üretim seviyesinde bir tıbbi karar destek motorusun.
 
-HARD RULES:
-- Never diagnose.
-- Never make definitive claims.
-- Use strong but safe clinical language.
-- Preferred phrasing: "may be compatible with", "may suggest", "requires evaluation", "clinical correlation is recommended", "should be assessed by a clinician".
-- Forbidden phrasing: "definitely has", "the diagnosis is", "clearly proves", "must be".
-- No markdown.
-- Output JSON only.
-- Never output null.
-- Every field must be filled.
-- Be consistent across similar cases.
-- If data is incomplete, mention that carefully without overstating uncertainty.
-- publicSummary should be accessible, polished, premium-feeling, and not superficial.
-- doctorSummary should be more technical, systematic, and deeper.
-- Do not overload publicSummary with jargon.
-- doctorSummary should use a problem-list and clinical-correlation mindset.
-- Avoid repetitive content across sections.
-- Do not generate unnecessary fear.
-- If both text and images are provided, assess them together. If only one modality exists, still work.
-- Use only uploaded data. Do not invent facts.
-- Do not provide numeric risk scores.
-- If red-flag type features are relevant, mention them in safe non-diagnostic language.
-- Specialty rule priority:
-  1) anemia / hemoglobin / iron / ferritin / B12 dominant -> Hematology
-  2) liver / ALT / AST / hepatobiliary dominant -> Gastroenterology
-  3) gallbladder / stone / sludge / cholecyst / cholecystectomy dominant -> General Surgery
-  4) lung / thoracic / pneumonia / dyspnea dominant -> Chest Diseases
-  5) otherwise -> Internal Medicine
-- If multiple systems are involved, note the multidisciplinary nature in summaries, but actionPlan.whichDoctor must contain only one primary specialty.
-- publicWarnings should be easy to understand.
-- doctorWarnings should be more clinical and differential-oriented.
-- privacyNotice should be brief and professional.
-- actionPlan.whatToDoNext should be a clear next-step sentence.
-- Never return empty arrays; generate safe general items if needed.
+Yalnızca geçerli JSON döndür ve tam olarak şu şemaya uy:
+{
+  "publicSummary": "string",
+  "doctorSummary": "string",
+  "keyFindings": ["string"],
+  "publicWarnings": ["string"],
+  "doctorWarnings": ["string"],
+  "privacyNotice": "string",
+  "actionPlan": {
+    "urgency": "string",
+    "whichDoctor": "string",
+    "whatToDoNext": "string"
+  }
+}
+
+Kesin kurallar:
+- Markdown kullanma.
+- JSON dışında hiçbir açıklama yazma.
+- null kullanma.
+- Hasta adı veya kimlik bilgisi yazma.
+- Kesin tanı koyma.
+- "düşündürebilir", "uyumlu olabilir", "değerlendirme gerekir", "klinik korelasyon önerilir" gibi yorumlayıcı tıbbi dil kullan.
+- Halk modu akıcı, premium hissi veren, açıklayıcı ve anlaşılır olmalı. Fazla kısaltıp yüzeysel yapma.
+- Doktor modu daha teknik, daha detaylı ve daha klinik yapılandırılmış olmalı.
+- Metin ve varsa görüntüleri birlikte değerlendir.
+- Görüntüler sınırlıysa veya ekran görüntüsü/parça seri ise bunu açıkça belirt.
+- Benzer paternlerde tutarlı mantık kullan.
+
+publicSummary kuralları:
+- 4 ila 7 cümle.
+- Halkın anlayacağı dilde ama basitleştirilmiş çocuk dili değil.
+- Bulguların anlamını açıklayıcı şekilde ver.
+
+doctorSummary kuralları:
+- publicSummary'den daha detaylı olsun.
+- Uygunsa şu sistemleri belirt: hematolojik, hepatobilier, gastrointestinal, pulmoner, endokrin, renal, nörolojik, radyolojik, inflamatuvar, enfeksiyöz.
+- Uygun yerde ayırıcı tanı çerçevesi kur.
+- Gerekiyorsa önceki tetkikler, klinik gidiş ve trend ihtiyacını belirt.
+
+keyFindings kuralları:
+- Kısa, net madde biçiminde.
+- Somut bulgular.
+- Mümkünse değer veya isimlendirilmiş anormallik içer.
+
+publicWarnings kuralları:
+- Hasta dostu olsun.
+- Korkutucu dil kullanma.
+- Kesin tanı cümlesi kurma.
+
+doctorWarnings kuralları:
+- Daha teknik olsun.
+- Kırmızı bayrakları, izlem gereksinimini, trend değerlendirmesini, ayırıcı tanıyı veya veri kısıtını belirt.
+
+privacyNotice sabit metni:
+"Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesinin yerine geçmez."
+
+actionPlan kuralları:
+- urgency tek kelime değil, doğal cümle olsun.
+- whichDoctor en uygun ilk branş olsun.
+- whatToDoNext uygulanabilir ve somut olsun.
+- Gerekirse şu ilk basamak branşları tercih et:
+  İç Hastalıkları, Hematoloji, Gastroenteroloji, Genel Cerrahi, Göğüs Hastalıkları, Nöroloji, Kardiyoloji.
+
+Tutarlılık örnekleri:
+- Demir eksikliği / düşük HGB / düşük HCT -> anemi ile uyumlu görünüm ve takip.
+- ALT/AST/GGT yüksekliği / hepatosteatoz / hepatomegali -> hepatobilier değerlendirme.
+- Safra taşı / kronik kolesistit -> bağlama göre genel cerrahi veya gastroenteroloji.
+- Trombositoz / lenfadenopati / organomegali -> hematoloji düşün.
+- Sadece sınırlı BT ekran görüntüsü -> kısıtlılık belirt, aşırı yorum yapma.
+
+Materyal sınırlı olsa bile boş dönme; yararlı, yapılandırılmış sonuç üret.
 `;
 }
 
-function buildUserPrompt(text, imagesCount, language) {
-  const isTr = language === "tr";
+function buildUserContent(reportText, images, language) {
+  const isEnglish = language === "en";
 
-  if (isTr) {
-    return [
-      "Yüklenen içerikleri değerlendir ve yalnızca istenen JSON şemasına göre cevap ver.",
-      "Metin ve görüntüleri birlikte düşün.",
-      "Genel Özet bölümünde bulguları sentezle, tekrar yapma, premium hissi ver.",
-      "Doktor Özeti bölümünde daha teknik, daha sistematik ve daha derin analiz yap.",
-      "Aşağıda kullanıcı metni yer alıyor:",
-      text ? text : "Kullanıcı yazılı metin sağlamadı; yalnızca görüntü girdileri mevcut olabilir.",
-      `Görüntü sayısı: ${imagesCount}`
-    ].join("\n\n");
-  }
+  const textBlock = isEnglish
+    ? `Medical content for analysis:\n\nReport text:\n${reportText || "(No report text provided)"}\n\nPlease analyze the medical content and return strict JSON only.`
+    : `Analiz için tıbbi içerik:\n\nRapor metni:\n${reportText || "(Rapor metni yok)"}\n\nLütfen tıbbi içeriği değerlendir ve yalnızca geçerli JSON döndür.`;
 
-  return [
-    "Assess the uploaded content and respond only in the requested JSON schema.",
-    "Consider text and images together.",
-    "In publicSummary, synthesize rather than repeat findings; make it polished and premium-feeling.",
-    "In doctorSummary, be more technical, systematic, and deeper.",
-    "User text is below:",
-    text ? text : "No written text was provided by the user; image inputs may be the only source.",
-    `Image count: ${imagesCount}`
-  ].join("\n\n");
-}
+  const content = [{ type: "text", text: textBlock }];
 
-function buildSchema(language) {
-  const isTr = language === "tr";
-
-  return {
-    name: "checkfinal_analysis_response",
-    strict: true,
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        publicSummary: {
-          type: "string",
-          description: isTr
-            ? "Halk için sade, açıklayıcı, premium hissi veren ön değerlendirme özeti"
-            : "Accessible, polished, premium-feeling public-facing preliminary summary"
-        },
-        doctorSummary: {
-          type: "string",
-          description: isTr
-            ? "Doktor için daha teknik, daha derin, sistematik klinik yorum"
-            : "More technical, deeper, systematic doctor-facing clinical interpretation"
-        },
-        keyFindings: {
-          type: "array",
-          items: { type: "string" },
-          minItems: 3,
-          maxItems: 8
-        },
-        publicWarnings: {
-          type: "array",
-          items: { type: "string" },
-          minItems: 2,
-          maxItems: 7
-        },
-        doctorWarnings: {
-          type: "array",
-          items: { type: "string" },
-          minItems: 2,
-          maxItems: 8
-        },
-        privacyNotice: {
-          type: "string"
-        },
-        actionPlan: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            urgency: { type: "string" },
-            whichDoctor: { type: "string" },
-            whatToDoNext: { type: "string" }
-          },
-          required: ["urgency", "whichDoctor", "whatToDoNext"]
-        }
+  for (const imageUrl of images) {
+    content.push({
+      type: "image_url",
+      image_url: {
+        url: imageUrl,
+        detail: "high",
       },
-      required: [
-        "publicSummary",
-        "doctorSummary",
-        "keyFindings",
-        "publicWarnings",
-        "doctorWarnings",
-        "privacyNotice",
-        "actionPlan"
-      ]
-    }
-  };
-}
-
-async function callOpenAIAnalysis({ text, images, selectedLanguage }) {
-  const fetchFn = getFetch();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  const userContent = [
-    {
-      type: "input_text",
-      text: buildUserPrompt(text, images.length, selectedLanguage)
-    },
-    ...images.map((imageUrl) => ({
-      type: "input_image",
-      image_url: imageUrl,
-      detail: "high"
-    }))
-  ];
-
-  const payload = {
-    model: OPENAI_MODEL,
-    store: false,
-    truncation: "auto",
-    input: [
-      {
-        role: "developer",
-        content: [{ type: "input_text", text: buildDeveloperPrompt(selectedLanguage) }]
-      },
-      {
-        role: "user",
-        content: userContent
-      }
-    ],
-    text: {
-      verbosity: "medium",
-      format: {
-        type: "json_schema",
-        ...buildSchema(selectedLanguage)
-      }
-    }
-  };
-
-  try {
-    const response = await fetchFn("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal
     });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      const apiError =
-        safeString(data?.error?.message) ||
-        safeString(data?.message) ||
-        `OpenAI API error (${response.status})`;
-      throw new Error(apiError);
-    }
-
-    return data;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return content;
 }
 
-function extractJsonFromOpenAIResponse(apiData) {
-  if (!apiData || typeof apiData !== "object") return null;
+app.get("/", (req, res) => {
+  res.send("CheckFinal backend is running");
+});
 
-  const candidates = [];
-
-  if (typeof apiData.output_text === "string" && apiData.output_text.trim()) {
-    candidates.push(apiData.output_text);
-  }
-
-  const outputItems = safeArray(apiData.output);
-  for (const item of outputItems) {
-    const contents = safeArray(item?.content);
-    for (const content of contents) {
-      if (typeof content?.text === "string" && content.text.trim()) candidates.push(content.text);
-      if (typeof content?.output_text === "string" && content.output_text.trim()) candidates.push(content.output_text);
-      if (typeof content?.json === "string" && content.json.trim()) candidates.push(content.json);
-      if (content?.parsed && typeof content.parsed === "object") return content.parsed;
-    }
-  }
-
-  for (const raw of candidates) {
-    try {
-      return JSON.parse(raw);
-    } catch (_) {}
-  }
-
-  return null;
-}
-
-app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "checkfinal-backend",
-    timestamp: nowIso(),
-    model: OPENAI_MODEL
-  });
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
 });
 
 app.post("/analyze", async (req, res) => {
-  const startedAt = Date.now();
+  const language = normalizeLanguage(req.body && req.body.language);
+  const isEnglish = language === "en";
 
   try {
-    const { text, images, selectedLanguage } = normalizeInputBody(req.body);
-
-    if (!text && !images.length) {
-      return res.status(400).json({
-        error: selectedLanguage === "en"
-          ? "No valid input found. Please upload text, image, or both."
-          : "Geçerli bir içerik bulunamadı. Lütfen metin, görüntü veya her ikisini yükleyin."
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        ...buildFallbackResponse(language),
+        publicSummary: isEnglish
+          ? "Server configuration error: API key is missing."
+          : "Sunucu yapılandırma hatası: API anahtarı eksik.",
+        doctorSummary: isEnglish
+          ? "OPENAI_API_KEY is not configured on the server."
+          : "Sunucuda OPENAI_API_KEY tanımlı değil.",
       });
     }
 
-    const fallback = buildFallbackAnalysis({ text, images, selectedLanguage });
-    let finalAnalysis = fallback;
+    const body = req.body || {};
+    const reportText =
+      safeString(body.reportText) ||
+      safeString(body.inputText) ||
+      safeString(body.text);
 
-    if (!OPENAI_API_KEY) {
-      log("warn", "OPENAI_API_KEY missing, using fallback analysis");
-    } else {
-      try {
-        const apiData = await callOpenAIAnalysis({ text, images, selectedLanguage });
-        const parsed = extractJsonFromOpenAIResponse(apiData);
-        finalAnalysis = normalizeAnalysis(parsed, fallback, text);
-      } catch (error) {
-        log("error", "OpenAI analysis failed, using fallback", { error: error.message });
-        finalAnalysis = fallback;
-      }
+    const images = normalizeImages(body);
+
+    if (!reportText && images.length === 0) {
+      return res.status(400).json({
+        error: isEnglish ? "No medical content provided." : "Tıbbi içerik gönderilmedi.",
+      });
     }
 
-    log("log", "Analyze success", {
-      durationMs: Date.now() - startedAt,
-      hasText: Boolean(text),
-      imageCount: images.length,
-      language: selectedLanguage
+    const completion = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      temperature: 0.15,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "developer",
+          content: buildDeveloperPrompt(language),
+        },
+        {
+          role: "user",
+          content: buildUserContent(reportText, images, language),
+        },
+      ],
     });
 
-    return res.json(finalAnalysis);
+    const raw = completion?.choices?.[0]?.message?.content || "{}";
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError);
+      console.error("Raw model output:", raw);
+      return res.status(500).json(buildFallbackResponse(language));
+    }
+
+    const normalized = normalizeResponse(parsed, language);
+    return res.json(normalized);
   } catch (error) {
-    log("error", "Analyze route failed", { error: error.message });
-
-    const selectedLanguage = normalizeLanguage(req.body?.selectedLanguage || req.body?.language || "tr");
-    const body = normalizeInputBody(req.body || {});
-    const fallback = buildFallbackAnalysis(body);
-
-    return res.status(200).json(
-      normalizeAnalysis(
-        {
-          ...fallback,
-          publicWarnings: dedupeStrings([
-            ...(fallback.publicWarnings || []),
-            selectedLanguage === "en"
-              ? "A robust fallback response was used due to a processing issue."
-              : "İşleme sırasında sorun oluştuğu için güvenli yedek yanıt kullanıldı."
-          ])
-        },
-        fallback,
-        body.text
-      )
-    );
+    console.error("Analyze error:", error);
+    return res.status(500).json(buildFallbackResponse(language));
   }
 });
 
-app.use((err, _req, res, _next) => {
-  log("error", "Unhandled middleware error", { error: err?.message || "Unknown error" });
-  return res.status(500).json({
-    error: "Sunucu hatası oluştu."
-  });
-});
-
 app.listen(PORT, () => {
-  log("log", `CheckFinal backend running on port ${PORT}`, {
-    model: OPENAI_MODEL,
-    timeoutMs: REQUEST_TIMEOUT_MS
-  });
+  console.log(`CheckFinal backend running on port ${PORT}`);
 });
