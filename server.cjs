@@ -41,9 +41,7 @@ function normalizeImages(body) {
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => {
-      if (item.startsWith("data:image/")) {
-        return item;
-      }
+      if (item.startsWith("data:image/")) return item;
       return `data:image/jpeg;base64,${item}`;
     });
 }
@@ -67,11 +65,20 @@ function replaceWholeText(text, language) {
       [/\bmust\b/gi, "should"],
       [/\bneeds\b/gi, "may need"],
       [/\brequires\b/gi, "may require"],
+      [/\brecommended\b/gi, "may be considered"],
+      [/\bstrongly recommended\b/gi, "may be considered"],
       [/\bschedule an appointment\b/gi, "consider medical evaluation"],
       [/\bgo to\b/gi, "consider evaluation by"],
+      [/\bsee\b/gi, "discuss with"],
       [/\bimmediately\b/gi, "without unnecessary delay"],
       [/\bdiagnosis\b/gi, "interpretation"],
       [/\btreatment advice\b/gi, "clinical guidance"],
+      [/\bbiopsy\b/gi, "tissue sampling evaluation"],
+      [/\bultrasound\b/gi, "ultrasound assessment"],
+      [/\bct follow-up\b/gi, "imaging follow-up"],
+      [/\bfurther evaluation is needed\b/gi, "further evaluation may be helpful"],
+      [/\bshould be evaluated\b/gi, "may be evaluated"],
+      [/\bshould be investigated\b/gi, "may warrant further review"],
       [/\s+/g, " "],
     ];
 
@@ -89,10 +96,18 @@ function replaceWholeText(text, language) {
       [/\bhastada var\b/gi, "ile ilişkili olabilecek bulgular vardır"],
       [/\bhemen ameliyat gerekir\b/gi, "tam klinik bağlama göre cerrahi değerlendirme düşünülebilir"],
       [/\btedavi başlanmalıdır\b/gi, "tedavi açısından klinik değerlendirme uygun olabilir"],
+      [/\bönerilir\b/gi, "düşünülebilir"],
+      [/\bşiddetle önerilir\b/gi, "özellikle düşünülebilir"],
       [/\bmutlaka\b/gi, "uygun şekilde"],
       [/\bgerektirir\b/gi, "gerektirebilir"],
       [/\bgereklidir\b/gi, "uygun olabilir"],
       [/\brandevu al\b/gi, "tıbbi değerlendirme düşünülebilir"],
+      [/\bgörülmelidir\b/gi, "değerlendirilebilir"],
+      [/\baraştırılmalıdır\b/gi, "araştırılabilir"],
+      [/\binceleme yapılmalıdır\b/gi, "inceleme düşünülebilir"],
+      [/\bbiyopsi\b/gi, "doku örneklemesi açısından değerlendirme"],
+      [/\bUSG\b/gi, "ultrasonografi değerlendirmesi"],
+      [/\busg\b/g, "ultrasonografi değerlendirmesi"],
       [/\bhemen\b/gi, "gereksiz gecikme olmadan"],
       [/\btanı\b/gi, "yorum"],
       [/\stedavi önerisi\b/gi, "klinik yönlendirme"],
@@ -123,9 +138,17 @@ function softenMedicalLabels(text, language) {
       [/\bulcerative colitis\b/gi, "findings that may require clinical correlation for inflammatory bowel disease"],
       [/\bupper respiratory infection\b/gi, "findings that may be related to the upper respiratory tract"],
       [/\bthrombocytopenia\b/gi, "a platelet pattern that may be compatible with thrombocytopenia"],
+      [/\bthrombocytosis\b/gi, "a platelet elevation pattern that may be compatible with thrombocytosis"],
+      [/\bleukocytosis\b/gi, "a white blood cell elevation pattern that may be compatible with leukocytosis"],
       [/\bhepatitis\b/gi, "hepatic inflammatory involvement that may require clinical correlation"],
       [/\binfection\b/gi, "an infectious process that may require clinical correlation"],
       [/\bmass lesion\b/gi, "a space-occupying lesion"],
+      [/\bhepatomegaly\b/gi, "reported hepatomegaly-related enlargement"],
+      [/\bsteatosis\b/gi, "a pattern that may be compatible with steatosis"],
+      [/\bground-glass\b/gi, "a ground-glass pattern"],
+      [/\batelectasis\b/gi, "an atelectatic pattern"],
+      [/\blymphoma\b/gi, "a condition that may need exclusion in the appropriate clinical context"],
+      [/\bsarcoidosis relapse\b/gi, "a possibility that may require exclusion in the appropriate clinical context"],
       [/\bmalignancy\b/gi, "a finding that may require further exclusion in the appropriate clinical context"],
     ];
 
@@ -144,10 +167,70 @@ function softenMedicalLabels(text, language) {
       [/\bülseratif kolit\b/gi, "inflamatuvar bağırsak hastalığı açısından klinik korelasyon gerektirebilecek bulgular"],
       [/\büst solunum yolu enfeksiyonu\b/gi, "üst solunum yolu ile ilişkili olabilecek bulgular"],
       [/\btrombositopeni\b/gi, "trombosit düşüklüğü ile uyumlu olabilecek patern"],
+      [/\btrombositoz\b/gi, "trombosit yüksekliği ile uyumlu laboratuvar paterni"],
+      [/\blökositoz\b/gi, "lökosit yüksekliği ile uyumlu laboratuvar paterni"],
       [/\bhepatit\b/gi, "karaciğer inflamasyonu açısından klinik korelasyon gerektirebilecek bulgular"],
       [/\benfeksiyon\b/gi, "enfeksiyöz süreç ile ilişkili olabilecek bulgular"],
       [/\byer kaplayıcı lezyon\b/gi, "yer kaplayıcı süreç"],
+      [/\bhepatomegali\b/gi, "raporlanmış karaciğer büyüklüğü artışı"],
+      [/\bsteatoz\b/gi, "steatoz ile uyumlu olabilecek patern"],
+      [/\bbuzlu cam\b/gi, "buzlu cam paterni"],
+      [/\batelektazi\b/gi, "atelektatik patern"],
+      [/\blenfoma\b/gi, "uygun klinik bağlamda dışlanması gerekebilecek durum"],
+      [/\bsarkoidoz relapsı\b/gi, "uygun klinik bağlamda dışlanması gerekebilecek olasılık"],
       [/\bmalignite\b/gi, "uygun klinik bağlamda dışlanması gerekebilecek durum"],
+    ];
+
+    for (const [pattern, replacement] of replacements) {
+      value = value.replace(pattern, replacement);
+    }
+  }
+
+  return value.trim();
+}
+
+function softenDirectivePhrases(text, language) {
+  let value = safeString(text);
+  if (!value) return "";
+
+  if (language === "en") {
+    const replacements = [
+      [/\bhematology evaluation\b/gi, "hematology review"],
+      [/\bpulmonary evaluation\b/gi, "pulmonary review"],
+      [/\bgastroenterology evaluation\b/gi, "gastroenterology review"],
+      [/\bneurology evaluation\b/gi, "neurology review"],
+      [/\bcardiology evaluation\b/gi, "cardiology review"],
+      [/\binternal medicine evaluation\b/gi, "internal medicine review"],
+      [/\bshould be followed\b/gi, "may be followed"],
+      [/\bshould be monitored\b/gi, "may be monitored"],
+      [/\bshould be excluded\b/gi, "may warrant exclusion"],
+      [/\bbiopsy may be required\b/gi, "the need for tissue sampling may be clarified clinically"],
+      [/\bultrasound may be recommended\b/gi, "ultrasound review may be considered"],
+      [/\bfurther hematologic and immunologic evaluation is recommended\b/gi, "further hematologic and immunologic review may be helpful"],
+      [/\bclinical correlation is recommended\b/gi, "clinical correlation may be helpful"],
+    ];
+
+    for (const [pattern, replacement] of replacements) {
+      value = value.replace(pattern, replacement);
+    }
+  } else {
+    const replacements = [
+      [/\bhematoloji değerlendirmesi\b/gi, "hematolojik değerlendirme"],
+      [/\bpulmoner değerlendirme\b/gi, "pulmoner inceleme"],
+      [/\bgastroenteroloji değerlendirmesi\b/gi, "gastroenterolojik değerlendirme"],
+      [/\bnöroloji değerlendirmesi\b/gi, "nörolojik değerlendirme"],
+      [/\bkardiyoloji değerlendirmesi\b/gi, "kardiyolojik değerlendirme"],
+      [/\biç hastalıkları değerlendirmesi\b/gi, "iç hastalıkları açısından değerlendirme"],
+      [/\btakibi önerilir\b/gi, "takibi düşünülebilir"],
+      [/\bizlenmelidir\b/gi, "izlenebilir"],
+      [/\bdışlanmalıdır\b/gi, "dışlanması değerlendirilebilir"],
+      [/\bbiyopsi gerektirebilir\b/gi, "doku örneklemesi ihtiyacı klinik bağlamda netleşebilir"],
+      [/\bUSG önerilebilir\b/gi, "ultrasonografi değerlendirmesi düşünülebilir"],
+      [/\bultrasonografi ile kontrolü uygun olabilir\b/gi, "ultrasonografi ile kontrol klinik bağlamda değerlendirilebilir"],
+      [/\bileri hematolojik ve immünolojik değerlendirme önerilir\b/gi, "ileri hematolojik ve immünolojik değerlendirme yararlı olabilir"],
+      [/\bklinik korelasyon önerilir\b/gi, "klinik korelasyon yararlı olabilir"],
+      [/\bek tetkik faydalı olabilir\b/gi, "ek inceleme klinik bağlamda yararlı olabilir"],
+      [/\baraştırılmalıdır\b/gi, "araştırılabilir"],
     ];
 
     for (const [pattern, replacement] of replacements) {
@@ -170,12 +253,13 @@ function cleanupSentence(text, language) {
 
   value = replaceWholeText(value, language);
   value = softenMedicalLabels(value, language);
+  value = softenDirectivePhrases(value, language);
   value = value.replace(/\s+/g, " ").trim();
 
   if (!value) {
     return language === "en"
-      ? "Clinical correlation is recommended."
-      : "Klinik korelasyon önerilir.";
+      ? "Clinical correlation may be helpful."
+      : "Klinik korelasyon yararlı olabilir.";
   }
 
   return value;
@@ -278,8 +362,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("hematoloji")
   ) {
     return isEnglish
-      ? "Hematology may be considered as an initial specialty depending on the broader clinical context."
-      : "Genel klinik bağlama göre ilk aşamada Hematoloji değerlendirmesi düşünülebilir.";
+      ? "Hematology may be considered as an initial review area depending on the broader clinical context."
+      : "Genel klinik bağlama göre ilk aşamada hematolojik değerlendirme düşünülebilir.";
   }
 
   if (
@@ -289,8 +373,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("gastroenteroloji")
   ) {
     return isEnglish
-      ? "Gastroenterology may be considered depending on the pattern of findings and clinical history."
-      : "Bulgu paternine ve klinik öyküye göre Gastroenteroloji değerlendirmesi düşünülebilir.";
+      ? "Gastroenterology review may be considered depending on the pattern of findings and clinical history."
+      : "Bulgu paternine ve klinik öyküye göre gastroenterolojik değerlendirme düşünülebilir.";
   }
 
   if (
@@ -300,8 +384,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("genel cerrahi")
   ) {
     return isEnglish
-      ? "General Surgery may be considered if supported by the full report and clinical findings."
-      : "Tam rapor ve klinik bulgular destekliyorsa Genel Cerrahi değerlendirmesi düşünülebilir.";
+      ? "General surgery review may be considered if supported by the full report and clinical findings."
+      : "Tam rapor ve klinik bulgular destekliyorsa cerrahi açıdan değerlendirme düşünülebilir.";
   }
 
   if (
@@ -311,8 +395,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("nörolog")
   ) {
     return isEnglish
-      ? "Neurology may be considered if the symptoms and examination findings are neurologically oriented."
-      : "Belirtiler ve muayene bulguları nörolojik ağırlıklıysa Nöroloji değerlendirmesi düşünülebilir.";
+      ? "Neurologic review may be considered if the symptoms and examination findings are neurologically oriented."
+      : "Belirtiler ve muayene bulguları nörolojik ağırlıklıysa nörolojik değerlendirme düşünülebilir.";
   }
 
   if (
@@ -322,8 +406,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("respiratory")
   ) {
     return isEnglish
-      ? "Chest Diseases may be considered depending on respiratory findings and the overall clinical picture."
-      : "Solunumsal bulgular ve genel klinik tabloya göre Göğüs Hastalıkları değerlendirmesi düşünülebilir.";
+      ? "Pulmonary review may be considered depending on respiratory findings and the overall clinical picture."
+      : "Solunumsal bulgular ve genel klinik tabloya göre pulmoner değerlendirme düşünülebilir.";
   }
 
   if (
@@ -333,8 +417,8 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("kardiyoloji")
   ) {
     return isEnglish
-      ? "Cardiology may be considered if the findings are compatible with cardiovascular assessment."
-      : "Bulgular kardiyovasküler değerlendirme ile uyumluysa Kardiyoloji değerlendirmesi düşünülebilir.";
+      ? "Cardiovascular review may be considered if the findings are compatible with that clinical context."
+      : "Bulgular kardiyovasküler bağlamla uyumluysa kardiyolojik değerlendirme düşünülebilir.";
   }
 
   if (
@@ -343,13 +427,13 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("dahiliye")
   ) {
     return isEnglish
-      ? "Internal Medicine may be considered as an initial evaluation point depending on the broader clinical context."
-      : "Geniş klinik bağlama göre ilk aşamada İç Hastalıkları değerlendirmesi düşünülebilir.";
+      ? "Internal medicine review may be considered as an initial evaluation point depending on the broader clinical context."
+      : "Geniş klinik bağlama göre ilk aşamada iç hastalıkları açısından değerlendirme düşünülebilir.";
   }
 
   return isEnglish
-    ? "A healthcare professional can determine the most appropriate specialty after reviewing the full clinical context."
-    : "Uygun branş, tam klinik değerlendirme sonrasında bir sağlık profesyoneli tarafından belirlenebilir.";
+    ? "A healthcare professional can determine the most appropriate review pathway after considering the full clinical context."
+    : "Uygun değerlendirme yolu, tam klinik bağlam göz önünde bulundurularak bir sağlık profesyoneli tarafından belirlenebilir.";
 }
 
 function sanitizeBulletItems(items, language) {
@@ -462,12 +546,12 @@ Non-negotiable rules:
 - Doctor summary must be more technical, more structured, and more detailed, but still non-diagnostic.
 - If images are limited, partial, or screenshot-based, explicitly state the limitation.
 - Keep reasoning internally consistent across similar cases.
-- Preserve meaningful medical keywords from the source when supported, such as anemia, hemoglobin, platelet, CRP, ferritin, vitamin B12, glucose, ALT, AST, creatinine, thyroid, gallbladder, liver, bowel, etc.
+- Preserve meaningful medical keywords from the source when supported, such as anemia, hemoglobin, platelet, CRP, ferritin, vitamin B12, glucose, ALT, AST, creatinine, thyroid, gallbladder, liver, bowel, lymph node, hepatomegaly, steatosis, leukocytosis, thrombocytosis, etc.
 - The app provides citations separately, so your role is to produce medically cautious content while preserving relevant finding terms.
 
 Important safety framing:
 - This is an AI-assisted informational and decision-support output.
-- It must not read like diagnosis, treatment advice, or discharge instructions.
+- It must not read like diagnosis, treatment advice, discharge instructions, or specialist orders.
 - Avoid absolute phrases such as:
   "this is", "confirms", "definitely", "you have", "must start treatment", "requires surgery now".
 - Prefer:
@@ -476,6 +560,7 @@ Important safety framing:
   "findings that may be compatible with anemia"
   "reported findings that may be compatible with chronic cholecystitis"
   "a laboratory pattern that may be compatible with iron deficiency"
+  "a platelet elevation pattern that may be compatible with thrombocytosis"
 - Do not present a disease label as final fact.
 
 publicSummary rules:
@@ -493,6 +578,7 @@ doctorSummary rules:
 - Mention correlation with prior labs, imaging, symptoms, and clinical course where appropriate.
 - No definitive diagnosis.
 - No imperative treatment language.
+- Avoid direct specialist instructions; frame them as possible review pathways.
 
 keyFindings rules:
 - Short bullet-style items.
@@ -516,6 +602,7 @@ doctorWarnings rules:
 - Mention limitations, red flags, trend need, differential considerations, and follow-up context when appropriate.
 - No treatment orders.
 - No direct medication or procedural instructions.
+- Prefer "may be helpful", "may be considered", "may warrant review" instead of "recommended", "should undergo", "must".
 
 privacyNotice must be exactly:
 "This report is for informational and decision-support purposes only. It does not replace physician evaluation, diagnosis, treatment planning, or medical judgment."
@@ -524,7 +611,7 @@ actionPlan rules:
 - urgency must be a natural sentence, not a single label.
 - whichDoctor must NOT be a bare specialty name.
 - whichDoctor must be phrased cautiously, such as:
-  "Internal Medicine may be considered as an initial evaluation point depending on the broader clinical context."
+  "Internal medicine review may be considered as an initial evaluation point depending on the broader clinical context."
 - whatToDoNext must be practical but non-prescriptive.
 - Examples of acceptable tone:
   "You may consider discussing these findings with a qualified healthcare professional."
@@ -569,11 +656,11 @@ Değişmez kurallar:
 - Doktor özeti daha teknik, daha yapılandırılmış ve daha detaylı olsun; yine de kesin tanı dili kullanmasın.
 - Görseller sınırlıysa, parçalıysa veya ekran görüntüsü niteliğindeyse bunu açıkça belirt.
 - Benzer olgularda tutarlı mantık kullan.
-- Kaynak sistemi uygulama tarafında ayrıca gösterileceği için; anemi, hemoglobin, trombosit, CRP, ferritin, vitamin B12, glukoz, ALT, AST, kreatinin, tiroid, safra kesesi, karaciğer, bağırsak gibi anlamlı tıbbi anahtar kelimeleri destek varsa koru.
+- Kaynak sistemi uygulama tarafında ayrıca gösterileceği için; anemi, hemoglobin, trombosit, CRP, ferritin, vitamin B12, glukoz, ALT, AST, kreatinin, tiroid, safra kesesi, karaciğer, bağırsak, lenf nodu, hepatomegali, steatoz, lökositoz, trombositoz gibi anlamlı tıbbi anahtar kelimeleri destek varsa koru.
 
 Önemli güvenlik çerçevesi:
 - Bu çıktı yapay zekâ destekli bilgilendirme ve karar desteği içindir.
-- Tanı, tedavi önerisi veya taburculuk talimatı gibi okunmamalıdır.
+- Tanı, tedavi önerisi, taburculuk talimatı veya uzman emri gibi okunmamalıdır.
 - Şu tür mutlak ifadelerden kaçın:
   "budur", "kesinleştirir", "kesin", "sende var", "tedavi başlanmalıdır", "hemen ameliyat gerekir".
 - Bunun yerine şunları tercih et:
@@ -582,6 +669,7 @@ Değişmez kurallar:
   "anemi ile uyumlu olabilecek bulgular"
   "kronik kolesistit ile uyumlu olarak raporlanmış bulgular"
   "demir eksikliği ile uyumlu olabilecek laboratuvar paterni"
+  "trombosit yüksekliği ile uyumlu laboratuvar paterni"
 - Hastalık etiketini nihai tanı gibi sunma.
 
 publicSummary kuralları:
@@ -599,6 +687,7 @@ doctorSummary kuralları:
 - Önceki tetkikler, görüntüleme, semptomlar ve klinik gidiş ile korelasyon gereğini uygun yerde belirt.
 - Kesin tanı koyma.
 - Emredici tedavi dili kullanma.
+- Doğrudan branş emri verme; bunu olası değerlendirme yolu gibi sun.
 
 keyFindings kuralları:
 - Kısa, net madde biçiminde olsun.
@@ -622,6 +711,7 @@ doctorWarnings kuralları:
 - Veri kısıtları, kırmızı bayraklar, trend gereksinimi, ayırıcı tanı ve takip bağlamını uygun şekilde belirt.
 - Tedavi emri verme.
 - İlaç veya işlem önerisini emir gibi yazma.
+- "önerilir", "uygulanmalıdır", "gereklidir" yerine mümkün olduğunca "yararlı olabilir", "düşünülebilir", "göz önünde bulundurulabilir" kullan.
 
 privacyNotice tam olarak şu olmalı:
 "Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesi, tanı, tedavi planı veya tıbbi kararın yerine geçmez."
@@ -630,7 +720,7 @@ actionPlan kuralları:
 - urgency tek kelime değil, doğal cümle olsun.
 - whichDoctor yalın bir branş adı olmasın.
 - whichDoctor şu tona benzer temkinli bir cümle olsun:
-  "Geniş klinik bağlama göre ilk aşamada İç Hastalıkları değerlendirmesi düşünülebilir."
+  "Geniş klinik bağlama göre ilk aşamada iç hastalıkları açısından değerlendirme düşünülebilir."
 - whatToDoNext pratik ama reçeteleyici olmayan bir dille yazılmalı.
 - Uygun ton örnekleri:
   "Bu bulgular yetkili bir sağlık profesyoneli ile görüşülebilir."
