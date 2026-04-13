@@ -44,8 +44,51 @@ function normalizeImages(body) {
       if (item.startsWith("data:image/")) {
         return item;
       }
-      return `data:image/jpeg;base64,${item}`;
+      return ⁠ data:image/jpeg;base64,${item} ⁠;
     });
+}
+
+function sanitizeSummaryText(text) {
+  return safeString(text)
+    .replace(/\b(adlı hasta|hasta adı|patient name|named patient)\b/gi, "")
+    .replace(/\b(definitive diagnosis|kesin tanı)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeLine(text, language) {
+  const isEnglish = language === "en";
+  let value = safeString(text);
+
+  if (!value) return "";
+
+  value = value
+    .replace(/\bmust\b/gi, "should")
+    .replace(/\bneeds\b/gi, "may need")
+    .replace(/\brequires\b/gi, "may require")
+    .replace(/\bdefinitely\b/gi, "")
+    .replace(/\bconfirmed\b/gi, "suggested")
+    .replace(/\bkesin\b/gi, "")
+    .replace(/\bmutlaka\b/gi, "uygun şekilde")
+    .replace(/\bgerektirir\b/gi, "gerektirebilir")
+    .replace(/\bgereklidir\b/gi, "uygun olabilir")
+    .replace(/\btedavi başlanmalıdır\b/gi, "tedavi açısından klinik değerlendirme uygun olabilir")
+    .replace(/\bstart treatment\b/gi, "consider clinical evaluation")
+    .replace(/\bschedule an appointment\b/gi, "consider medical evaluation")
+    .replace(/\bgo to\b/gi, "consider evaluation by")
+    .replace(/\bsee\b/gi, "consult")
+    .replace(/\bimmediately\b/gi, "without unnecessary delay")
+    .replace(/\bhemen\b/gi, "gereksiz gecikme olmadan")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!value) {
+    return isEnglish
+      ? "Clinical correlation is recommended."
+      : "Klinik korelasyon önerilir.";
+  }
+
+  return value;
 }
 
 function inferUrgencyText(raw, isEnglish) {
@@ -56,11 +99,13 @@ function inferUrgencyText(raw, isEnglish) {
     text.includes("urgent") ||
     text.includes("emergency") ||
     text.includes("should not be delayed") ||
-    text.includes("geciktirilmemelidir")
+    text.includes("geciktirilmemelidir") ||
+    text.includes("red-flag") ||
+    text.includes("kırmızı bayrak")
   ) {
     return isEnglish
-      ? "A physician review should not be delayed, especially if symptoms are increasing or red-flag findings are present."
-      : "Özellikle belirtiler artıyorsa veya kırmızı bayrak bulguları varsa hekim değerlendirmesi geciktirilmemelidir.";
+      ? "Medical review should not be delayed, particularly if symptoms are increasing or red-flag findings are present."
+      : "Özellikle belirtiler artıyorsa veya kırmızı bayrak bulguları varsa tıbbi değerlendirme geciktirilmemelidir.";
   }
 
   if (
@@ -69,16 +114,17 @@ function inferUrgencyText(raw, isEnglish) {
     text.includes("near-term") ||
     text.includes("soon") ||
     text.includes("within days") ||
-    text.includes("prompt")
+    text.includes("prompt") ||
+    text.includes("orta")
   ) {
     return isEnglish
-      ? "Near-term specialist evaluation is appropriate according to the overall findings and symptom course."
-      : "Genel bulgular ve belirtilerin seyrine göre yakın zamanda uzman değerlendirmesi uygundur.";
+      ? "Medical review may be considered in the near term according to symptoms, examination findings, and prior results."
+      : "Belirtiler, muayene bulguları ve önceki sonuçlara göre yakın dönemde tıbbi değerlendirme düşünülebilir.";
   }
 
   return isEnglish
-    ? "Routine follow-up may be appropriate depending on symptoms, examination, and prior test results."
-    : "Belirtiler, muayene ve önceki tetkiklerle birlikte değerlendirilerek rutin kontrol uygun olabilir.";
+    ? "Routine medical review may be considered depending on symptoms, examination, and prior test results."
+    : "Belirtiler, muayene ve önceki tetkiklerle birlikte değerlendirilerek rutin tıbbi inceleme düşünülebilir.";
 }
 
 function buildFallbackResponse(language = "tr") {
@@ -86,31 +132,33 @@ function buildFallbackResponse(language = "tr") {
 
   return {
     publicSummary: isEnglish
-      ? "The uploaded medical content could not be interpreted reliably at this time. Please try again with clearer text or images. If symptoms are significant, seek medical evaluation."
-      : "Yüklenen tıbbi içerik bu aşamada güvenilir şekilde yorumlanamadı. Daha net metin veya görüntülerle tekrar deneyin. Yakınmalar belirginse hekim değerlendirmesine başvurun.",
+      ? "The uploaded medical content could not be interpreted with sufficient confidence at this time. Please try again with clearer text or images. If symptoms are significant or worsening, medical evaluation should be considered."
+      : "Yüklenen tıbbi içerik bu aşamada yeterli güvenle yorumlanamadı. Daha net metin veya görüntülerle tekrar deneyin. Yakınmalar belirginse veya artıyorsa tıbbi değerlendirme düşünülmelidir.",
     doctorSummary: isEnglish
-      ? "Structured interpretation could not be generated. Correlation with the original report, clinical history, physical examination, and prior results is required."
-      : "Yapılandırılmış yorum oluşturulamadı. Orijinal rapor, klinik öykü, fizik muayene ve önceki sonuçlarla birlikte değerlendirme gerekir.",
+      ? "A structured interpretation could not be generated with sufficient reliability. Review of the original report, clinical history, examination findings, and prior results is recommended."
+      : "Yeterli güvenilirlikte yapılandırılmış yorum oluşturulamadı. Orijinal rapor, klinik öykü, muayene bulguları ve önceki sonuçlarla birlikte değerlendirme önerilir.",
     keyFindings: isEnglish
       ? ["No reliable structured extraction could be completed from the uploaded material."]
       : ["Yüklenen içerikten güvenilir yapılandırılmış çıkarım tamamlanamadı."],
     publicWarnings: isEnglish
-      ? ["If you have severe pain, shortness of breath, fainting, confusion, or rapid worsening, seek urgent care."]
-      : ["Şiddetli ağrı, nefes darlığı, bayılma, bilinç değişikliği veya hızlı kötüleşme varsa acil değerlendirme gerekir."],
+      ? ["If there is severe pain, shortness of breath, fainting, confusion, or rapid worsening, urgent medical assessment should be considered."]
+      : ["Şiddetli ağrı, nefes darlığı, bayılma, bilinç değişikliği veya hızlı kötüleşme varsa acil tıbbi değerlendirme düşünülmelidir."],
     doctorWarnings: isEnglish
       ? ["Manual review of the original report and full clinical correlation are recommended."]
       : ["Orijinal raporun manuel incelenmesi ve tam klinik korelasyon önerilir."],
     privacyNotice: isEnglish
-      ? "This report is for informational and decision-support purposes only. It does not replace physician evaluation."
-      : "Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesinin yerine geçmez.",
+      ? "This report is for informational and decision-support purposes only. It does not replace physician evaluation, diagnosis, treatment planning, or medical judgment."
+      : "Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesi, tanı, tedavi planı veya tıbbi kararın yerine geçmez.",
     actionPlan: {
       urgency: isEnglish
-        ? "A physician review should be arranged according to symptom severity and the quality of the uploaded material."
-        : "Belirtilerin şiddetine ve yüklenen içeriğin kalitesine göre hekim değerlendirmesi planlanmalıdır.",
-      whichDoctor: isEnglish ? "Internal Medicine" : "İç Hastalıkları",
+        ? "Medical review may be arranged according to symptom severity and the quality of the uploaded material."
+        : "Belirtilerin şiddeti ve yüklenen içeriğin kalitesine göre tıbbi değerlendirme planlanabilir.",
+      whichDoctor: isEnglish
+        ? "A healthcare professional can determine the most appropriate specialty after reviewing the full clinical context."
+        : "Uygun branş, tam klinik değerlendirme sonrasında bir sağlık profesyoneli tarafından belirlenebilir.",
       whatToDoNext: isEnglish
-        ? "Repeat the upload with clearer documents or images, compare with prior records, and arrange physician follow-up."
-        : "Daha net belge veya görüntülerle tekrar yükleme yapın, önceki kayıtlarla karşılaştırın ve hekim kontrolü planlayın.",
+        ? "You may consider repeating the upload with clearer documents or images and sharing the available material with a qualified healthcare professional."
+        : "Daha net belge veya görüntülerle tekrar yükleme yapılması ve mevcut materyalin yetkili bir sağlık profesyoneli ile paylaşılması düşünülebilir.",
     },
   };
 }
@@ -118,19 +166,22 @@ function buildFallbackResponse(language = "tr") {
 function normalizeWhichDoctor(raw, language) {
   const isEnglish = language === "en";
   const text = safeString(raw);
+  const lower = text.toLowerCase();
 
   if (!text) {
-    return isEnglish ? "Internal Medicine" : "İç Hastalıkları";
+    return isEnglish
+      ? "A healthcare professional can determine the most appropriate specialty after reviewing the full clinical context."
+      : "Uygun branş, tam klinik değerlendirme sonrasında bir sağlık profesyoneli tarafından belirlenebilir.";
   }
-
-  const lower = text.toLowerCase();
 
   if (
     lower.includes("hematolog") ||
     lower.includes("hematology") ||
     lower.includes("hematoloji")
   ) {
-    return isEnglish ? "Hematology" : "Hematoloji";
+    return isEnglish
+      ? "Hematology may be considered as an initial specialty depending on the broader clinical context."
+      : "Genel klinik bağlama göre ilk aşamada Hematoloji değerlendirmesi düşünülebilir.";
   }
 
   if (
@@ -139,7 +190,9 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("hepatoloji") ||
     lower.includes("gastroenteroloji")
   ) {
-    return isEnglish ? "Gastroenterology" : "Gastroenteroloji";
+    return isEnglish
+      ? "Gastroenterology may be considered depending on the pattern of findings and clinical history."
+      : "Bulgu paternine ve klinik öyküye göre Gastroenteroloji değerlendirmesi düşünülebilir.";
   }
 
   if (
@@ -148,7 +201,9 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("surgery") ||
     lower.includes("genel cerrahi")
   ) {
-    return isEnglish ? "General Surgery" : "Genel Cerrahi";
+    return isEnglish
+      ? "General Surgery may be considered if supported by the full report and clinical findings."
+      : "Tam rapor ve klinik bulgular destekliyorsa Genel Cerrahi değerlendirmesi düşünülebilir.";
   }
 
   if (
@@ -157,7 +212,9 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("neurolog") ||
     lower.includes("nörolog")
   ) {
-    return isEnglish ? "Neurology" : "Nöroloji";
+    return isEnglish
+      ? "Neurology may be considered if the symptoms and examination findings are neurologically oriented."
+      : "Belirtiler ve muayene bulguları nörolojik ağırlıklıysa Nöroloji değerlendirmesi düşünülebilir.";
   }
 
   if (
@@ -166,7 +223,9 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("göğüs") ||
     lower.includes("respiratory")
   ) {
-    return isEnglish ? "Chest Diseases" : "Göğüs Hastalıkları";
+    return isEnglish
+      ? "Chest Diseases may be considered depending on respiratory findings and the overall clinical picture."
+      : "Solunumsal bulgular ve genel klinik tabloya göre Göğüs Hastalıkları değerlendirmesi düşünülebilir.";
   }
 
   if (
@@ -175,48 +234,90 @@ function normalizeWhichDoctor(raw, language) {
     lower.includes("cardiology") ||
     lower.includes("kardiyoloji")
   ) {
-    return isEnglish ? "Cardiology" : "Kardiyoloji";
+    return isEnglish
+      ? "Cardiology may be considered if the findings are compatible with cardiovascular assessment."
+      : "Bulgular kardiyovasküler değerlendirme ile uyumluysa Kardiyoloji değerlendirmesi düşünülebilir.";
   }
 
-  return text;
+  if (
+    lower.includes("internal medicine") ||
+    lower.includes("iç hastalıkları") ||
+    lower.includes("dahiliye")
+  ) {
+    return isEnglish
+      ? "Internal Medicine may be considered as an initial evaluation point depending on the broader clinical context."
+      : "Geniş klinik bağlama göre ilk aşamada İç Hastalıkları değerlendirmesi düşünülebilir.";
+  }
+
+  return isEnglish
+    ? "A healthcare professional can determine the most appropriate specialty after reviewing the full clinical context."
+    : "Uygun branş, tam klinik değerlendirme sonrasında bir sağlık profesyoneli tarafından belirlenebilir.";
 }
 
-function sanitizeSummaryText(text) {
-  return safeString(text)
-    .replace(/\b(adlı hasta|hasta adı|patient name|named patient)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function sanitizeBulletItems(items, language) {
+  return toStringArray(items)
+    .map((item) => sanitizeLine(item, language))
+    .map((item) => item.replace(/^[•\-\s]+/, "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function sanitizeActionText(raw, language, type) {
+  const isEnglish = language === "en";
+  const text = sanitizeLine(raw, language);
+
+  if (text) return text;
+
+  if (type === "next") {
+    return isEnglish
+      ? "You may consider sharing these findings with a qualified healthcare professional together with symptom history and prior results."
+      : "Bu bulguların belirti öyküsü ve önceki sonuçlarla birlikte yetkili bir sağlık profesyoneli ile paylaşılması düşünülebilir.";
+  }
+
+  return isEnglish
+    ? "Clinical correlation is recommended."
+    : "Klinik korelasyon önerilir.";
 }
 
 function normalizeResponse(parsed, language) {
   const fallback = buildFallbackResponse(language);
-  const isEnglish = language === "en";
 
-  const publicSummary = sanitizeSummaryText(parsed.publicSummary) || fallback.publicSummary;
-  const doctorSummary = sanitizeSummaryText(parsed.doctorSummary) || fallback.doctorSummary;
+  const publicSummary =
+    sanitizeSummaryText(parsed.publicSummary) || fallback.publicSummary;
 
-  const keyFindings = toStringArray(parsed.keyFindings);
-  const publicWarnings = toStringArray(parsed.publicWarnings);
-  const doctorWarnings = toStringArray(parsed.doctorWarnings);
+  const doctorSummary =
+    sanitizeSummaryText(parsed.doctorSummary) || fallback.doctorSummary;
+
+  const keyFindings = sanitizeBulletItems(parsed.keyFindings, language);
+  const publicWarnings = sanitizeBulletItems(parsed.publicWarnings, language);
+  const doctorWarnings = sanitizeBulletItems(parsed.doctorWarnings, language);
 
   const privacyNotice =
     safeString(parsed.privacyNotice) || fallback.privacyNotice;
 
-  const actionPlan = parsed.actionPlan && typeof parsed.actionPlan === "object"
-    ? parsed.actionPlan
-    : {};
+  const actionPlan =
+    parsed.actionPlan && typeof parsed.actionPlan === "object"
+      ? parsed.actionPlan
+      : {};
 
-  const urgency = inferUrgencyText(actionPlan.urgency, isEnglish);
+  const urgency = inferUrgencyText(actionPlan.urgency, language === "en");
   const whichDoctor = normalizeWhichDoctor(actionPlan.whichDoctor, language);
-  const whatToDoNext =
-    safeString(actionPlan.whatToDoNext) || fallback.actionPlan.whatToDoNext;
+  const whatToDoNext = sanitizeActionText(
+    actionPlan.whatToDoNext,
+    language,
+    "next"
+  );
 
   return {
     publicSummary,
     doctorSummary,
     keyFindings: keyFindings.length ? keyFindings : fallback.keyFindings,
-    publicWarnings: publicWarnings.length ? publicWarnings : fallback.publicWarnings,
-    doctorWarnings: doctorWarnings.length ? doctorWarnings : fallback.doctorWarnings,
+    publicWarnings: publicWarnings.length
+      ? publicWarnings
+      : fallback.publicWarnings,
+    doctorWarnings: doctorWarnings.length
+      ? doctorWarnings
+      : fallback.doctorWarnings,
     privacyNotice,
     actionPlan: {
       urgency,
@@ -231,7 +332,7 @@ function buildDeveloperPrompt(language) {
 
   if (isEnglish) {
     return `
-You are a production-grade medical decision-support engine for the CheckFinal mobile app.
+You are a production-grade AI-assisted medical decision-support engine for the CheckFinal mobile app.
 
 Return ONLY valid JSON and match this exact schema:
 {
@@ -248,67 +349,84 @@ Return ONLY valid JSON and match this exact schema:
   }
 }
 
-Hard rules:
-- Never output markdown.
-- Never output commentary outside JSON.
-- Never use null.
-- Do not include patient names or identifying details.
-- Do not make a definitive diagnosis.
-- Use interpretive medical language such as "may suggest", "is compatible with", "requires evaluation", "should be correlated clinically".
-- Public mode must remain fluent, premium, explanatory, and understandable. Do NOT oversimplify into short shallow text.
-- Doctor mode must be more technical, more detailed, and clinically structured.
-- Extract from both report text and images if present.
-- If images are limited or partial, explicitly state that image-based interpretation is limited.
-- Be internally consistent. Similar patterns should yield similar logic and tone.
+Non-negotiable rules:
+•⁠  ⁠Never output markdown.
+•⁠  ⁠Never output commentary outside JSON.
+•⁠  ⁠Never use null.
+•⁠  ⁠Do not include patient names, identifiers, addresses, dates of birth, or other personal identifiers.
+•⁠  ⁠Do not make a definitive diagnosis.
+•⁠  ⁠Do not prescribe treatment.
+•⁠  ⁠Do not tell the user to start, stop, or change medication.
+•⁠  ⁠Do not sound like a final medical authority.
+•⁠  ⁠Use cautious interpretive language such as:
+  "may suggest", "may be compatible with", "could reflect", "may warrant evaluation", "should be correlated clinically".
+•⁠  ⁠Public summary must be understandable, premium, calm, and informative.
+•⁠  ⁠Doctor summary must be more technical, more structured, and more detailed.
+•⁠  ⁠If images are limited, partial, or screenshot-based, explicitly state the limitation.
+•⁠  ⁠Keep reasoning internally consistent across similar cases.
+•⁠  ⁠Preserve meaningful medical keywords from the source when supported, such as anemia, hemoglobin, platelet, CRP, ferritin, vitamin B12, glucose, ALT, AST, creatinine, thyroid, etc.
+•⁠  ⁠The app itself provides citations separately, so your role is to produce medically cautious content that preserves the relevant finding terms.
 
-Public summary rules:
-- 4 to 7 sentences.
-- Clear and premium-sounding.
-- Explain findings in a patient-understandable way without sounding childish.
+Important safety framing:
+•⁠  ⁠This is an AI-assisted informational and decision-support output.
+•⁠  ⁠It must not read like diagnosis, treatment advice, or discharge instructions.
+•⁠  ⁠Avoid absolute phrases such as:
+  "this is", "confirms", "definitely", "you have", "must start treatment", "requires surgery now".
+•⁠  ⁠Prefer:
+  "may be associated with", "may justify medical review", "can be discussed with a healthcare professional".
 
-Doctor summary rules:
-- More detailed than public summary.
-- Mention likely systems involved when supported by input: hematologic, hepatobiliary, gastrointestinal, pulmonary, endocrine, renal, neurologic, radiologic, inflammatory, infectious, etc.
-- Mention differential framing when appropriate.
-- Mention correlation with prior imaging/labs/clinical course when appropriate.
+publicSummary rules:
+•⁠  ⁠4 to 6 sentences.
+•⁠  ⁠Calm, clear, medically literate, but understandable.
+•⁠  ⁠No childish simplification.
+•⁠  ⁠No direct treatment instructions.
+
+doctorSummary rules:
+•⁠  ⁠More detailed than publicSummary.
+•⁠  ⁠Mention likely systems involved when supported by the input:
+  hematologic, hepatobiliary, gastrointestinal, pulmonary, endocrine, renal, neurologic, radiologic, inflammatory, infectious.
+•⁠  ⁠Mention differential framing when appropriate.
+•⁠  ⁠Mention correlation with prior labs, imaging, symptoms, and clinical course where appropriate.
+•⁠  ⁠No definitive diagnosis.
 
 keyFindings rules:
-- Short bullet-style items.
-- Concrete findings only.
-- Prefer values or named abnormalities where available.
+•⁠  ⁠Short bullet-style items.
+•⁠  ⁠Concrete findings only.
+•⁠  ⁠Prefer actual values or explicitly stated abnormalities where available.
+•⁠  ⁠Avoid recommendations in this section.
 
 publicWarnings rules:
-- Patient-friendly.
-- No panic language.
-- No absolute diagnosis.
+•⁠  ⁠Patient-friendly.
+•⁠  ⁠No panic language.
+•⁠  ⁠No definitive disease labeling.
+•⁠  ⁠Mention red-flag symptoms only when clearly relevant.
 
 doctorWarnings rules:
-- More technical.
-- Mention red flags, follow-up needs, trend assessment, differential considerations, or limits of the data.
+•⁠  ⁠More technical.
+•⁠  ⁠Mention limitations, red flags, trend need, differential considerations, and follow-up context when appropriate.
+•⁠  ⁠No treatment orders.
 
-privacyNotice:
-"This report is for informational and decision-support purposes only. It does not replace physician evaluation."
+privacyNotice must be exactly:
+"This report is for informational and decision-support purposes only. It does not replace physician evaluation, diagnosis, treatment planning, or medical judgment."
 
 actionPlan rules:
-- urgency must be a sentence, not a one-word label.
-- whichDoctor must be the single most appropriate first specialty.
-- whatToDoNext must be actionable and specific.
-- Prefer common first-line specialties when appropriate:
-  Internal Medicine, Hematology, Gastroenterology, General Surgery, Chest Diseases, Neurology, Cardiology.
-
-Consistency examples:
-- Iron deficiency / low HGB / low HCT -> mention anemia-compatible picture and follow-up.
-- Elevated ALT/AST/GGT / fatty liver / hepatomegaly -> mention hepatobiliary evaluation.
-- Gallbladder stones / chronic cholecystitis -> mention general surgery or gastroenterology depending context.
-- Thrombocytosis / adenopathy / organomegaly -> consider hematology.
-- Limited CT screenshot only -> state limitation; do not overcall.
+•⁠  ⁠urgency must be a natural sentence, not a single label.
+•⁠  ⁠whichDoctor must NOT be a bare specialty name.
+•⁠  ⁠whichDoctor must be phrased cautiously, such as:
+  "Internal Medicine may be considered as an initial evaluation point depending on the broader clinical context."
+•⁠  ⁠whatToDoNext must be practical but non-prescriptive.
+•⁠  ⁠Examples of acceptable tone:
+  "You may consider discussing these findings with a qualified healthcare professional."
+  "Correlation with prior results and current symptoms may be helpful."
+•⁠  ⁠Avoid direct commands like:
+  "Schedule an appointment", "Start treatment", "Go to surgery", "Take iron", "Use antibiotics".
 
 If the material is limited, still return a useful structured result instead of refusing.
 `;
   }
 
   return `
-Sen CheckFinal mobil uygulaması için çalışan üretim seviyesinde bir tıbbi karar destek motorusun.
+Sen CheckFinal mobil uygulaması için çalışan üretim seviyesinde yapay zekâ destekli bir tıbbi karar destek motorusun.
 
 Yalnızca geçerli JSON döndür ve tam olarak şu şemaya uy:
 {
@@ -325,62 +443,78 @@ Yalnızca geçerli JSON döndür ve tam olarak şu şemaya uy:
   }
 }
 
-Kesin kurallar:
-- Markdown kullanma.
-- JSON dışında hiçbir açıklama yazma.
-- null kullanma.
-- Hasta adı veya kimlik bilgisi yazma.
-- Kesin tanı koyma.
-- "düşündürebilir", "uyumlu olabilir", "değerlendirme gerekir", "klinik korelasyon önerilir" gibi yorumlayıcı tıbbi dil kullan.
-- Halk modu akıcı, premium hissi veren, açıklayıcı ve anlaşılır olmalı. Fazla kısaltıp yüzeysel yapma.
-- Doktor modu daha teknik, daha detaylı ve daha klinik yapılandırılmış olmalı.
-- Metin ve varsa görüntüleri birlikte değerlendir.
-- Görüntüler sınırlıysa veya ekran görüntüsü/parça seri ise bunu açıkça belirt.
-- Benzer paternlerde tutarlı mantık kullan.
+Değişmez kurallar:
+•⁠  ⁠Markdown kullanma.
+•⁠  ⁠JSON dışında hiçbir açıklama yazma.
+•⁠  ⁠null kullanma.
+•⁠  ⁠Hasta adı, kimlik bilgisi, adres, doğum tarihi veya tanımlayıcı bilgi yazma.
+•⁠  ⁠Kesin tanı koyma.
+•⁠  ⁠Tedavi reçetelemezsin.
+•⁠  ⁠İlaç başlama, ilaç kesme veya doz değiştirme önerisi verme.
+•⁠  ⁠Nihai tıbbi otorite gibi konuşma.
+•⁠  ⁠Şu tür temkinli yorumlayıcı dili kullan:
+  "düşündürebilir", "uyumlu olabilir", "yansıtabilir", "değerlendirme gerektirebilir", "klinik korelasyon önerilir".
+•⁠  ⁠Halk özeti anlaşılır, sakin, premium hissi veren ve bilgilendirici olsun.
+•⁠  ⁠Doktor özeti daha teknik, daha yapılandırılmış ve daha detaylı olsun.
+•⁠  ⁠Görseller sınırlıysa, parçalıysa veya ekran görüntüsü niteliğindeyse bunu açıkça belirt.
+•⁠  ⁠Benzer olgularda tutarlı mantık kullan.
+•⁠  ⁠Kaynak sistemi uygulama tarafında ayrıca gösterileceği için; anemi, hemoglobin, trombosit, CRP, ferritin, vitamin B12, glukoz, ALT, AST, kreatinin, tiroid gibi anlamlı tıbbi anahtar kelimeleri destek varsa koru.
+
+Önemli güvenlik çerçevesi:
+•⁠  ⁠Bu çıktı yapay zekâ destekli bilgilendirme ve karar desteği içindir.
+•⁠  ⁠Tanı, tedavi önerisi veya taburculuk talimatı gibi okunmamalıdır.
+•⁠  ⁠Şu tür mutlak ifadelerden kaçın:
+  "budur", "kesinleştirir", "kesin", "sende var", "tedavi başlanmalıdır", "hemen ameliyat gerekir".
+•⁠  ⁠Bunun yerine şunları tercih et:
+  "ilişkili olabilir", "tıbbi değerlendirmeyi gerektirebilir", "bir sağlık profesyoneli ile görüşülebilir".
 
 publicSummary kuralları:
-- 4 ila 7 cümle.
-- Halkın anlayacağı dilde ama basitleştirilmiş çocuk dili değil.
-- Bulguların anlamını açıklayıcı şekilde ver.
+•⁠  ⁠4 ila 6 cümle.
+•⁠  ⁠Sakin, açık, tıbben düzgün ama anlaşılır olsun.
+•⁠  ⁠Çocuk dili gibi aşırı basitleştirme yapma.
+•⁠  ⁠Doğrudan tedavi komutu verme.
 
 doctorSummary kuralları:
-- publicSummary'den daha detaylı olsun.
-- Uygunsa şu sistemleri belirt: hematolojik, hepatobilier, gastrointestinal, pulmoner, endokrin, renal, nörolojik, radyolojik, inflamatuvar, enfeksiyöz.
-- Uygun yerde ayırıcı tanı çerçevesi kur.
-- Gerekiyorsa önceki tetkikler, klinik gidiş ve trend ihtiyacını belirt.
+•⁠  ⁠publicSummary'den daha detaylı olsun.
+•⁠  ⁠Girdi destekliyorsa şu sistemleri belirt:
+  hematolojik, hepatobilier, gastrointestinal, pulmoner, endokrin, renal, nörolojik, radyolojik, inflamatuvar, enfeksiyöz.
+•⁠  ⁠Uygun yerde ayırıcı tanı çerçevesi kur.
+•⁠  ⁠Önceki tetkikler, görüntüleme, semptomlar ve klinik gidiş ile korelasyon gereğini uygun yerde belirt.
+•⁠  ⁠Kesin tanı koyma.
 
 keyFindings kuralları:
-- Kısa, net madde biçiminde.
-- Somut bulgular.
-- Mümkünse değer veya isimlendirilmiş anormallik içer.
+•⁠  ⁠Kısa, net madde biçiminde olsun.
+•⁠  ⁠Yalnızca somut bulgular yer alsın.
+•⁠  ⁠Mümkünse gerçek değer veya açıkça belirtilmiş anormallik kullan.
+•⁠  ⁠Bu bölümde öneri yazma.
 
 publicWarnings kuralları:
-- Hasta dostu olsun.
-- Korkutucu dil kullanma.
-- Kesin tanı cümlesi kurma.
+•⁠  ⁠Hasta dostu olsun.
+•⁠  ⁠Korkutucu dil kullanma.
+•⁠  ⁠Kesin hastalık etiketleme yapma.
+•⁠  ⁠Ancak açıkça uygunsa önemli uyarı semptomlarını belirtebilirsin.
 
 doctorWarnings kuralları:
-- Daha teknik olsun.
-- Kırmızı bayrakları, izlem gereksinimini, trend değerlendirmesini, ayırıcı tanıyı veya veri kısıtını belirt.
+•⁠  ⁠Daha teknik olsun.
+•⁠  ⁠Veri kısıtları, kırmızı bayraklar, trend gereksinimi, ayırıcı tanı ve takip bağlamını uygun şekilde belirt.
+•⁠  ⁠Tedavi emri verme.
 
-privacyNotice sabit metni:
-"Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesinin yerine geçmez."
+privacyNotice tam olarak şu olmalı:
+"Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesi, tanı, tedavi planı veya tıbbi kararın yerine geçmez."
 
 actionPlan kuralları:
-- urgency tek kelime değil, doğal cümle olsun.
-- whichDoctor en uygun ilk branş olsun.
-- whatToDoNext uygulanabilir ve somut olsun.
-- Gerekirse şu ilk basamak branşları tercih et:
-  İç Hastalıkları, Hematoloji, Gastroenteroloji, Genel Cerrahi, Göğüs Hastalıkları, Nöroloji, Kardiyoloji.
+•⁠  ⁠urgency tek kelime değil, doğal cümle olsun.
+•⁠  ⁠whichDoctor yalın bir branş adı olmasın.
+•⁠  ⁠whichDoctor şu tona benzer temkinli bir cümle olsun:
+  "Geniş klinik bağlama göre ilk aşamada İç Hastalıkları değerlendirmesi düşünülebilir."
+•⁠  ⁠whatToDoNext pratik ama reçeteleyici olmayan bir dille yazılmalı.
+•⁠  ⁠Uygun ton örnekleri:
+  "Bu bulgular yetkili bir sağlık profesyoneli ile görüşülebilir."
+  "Önceki sonuçlar ve mevcut belirtilerle birlikte değerlendirme yararlı olabilir."
+•⁠  ⁠Şu tür doğrudan komutlardan kaçın:
+  "Randevu al", "Tedaviye başla", "Cerrahiye git", "Demir kullan", "Antibiyotik başla".
 
-Tutarlılık örnekleri:
-- Demir eksikliği / düşük HGB / düşük HCT -> anemi ile uyumlu görünüm ve takip.
-- ALT/AST/GGT yüksekliği / hepatosteatoz / hepatomegali -> hepatobilier değerlendirme.
-- Safra taşı / kronik kolesistit -> bağlama göre genel cerrahi veya gastroenteroloji.
-- Trombositoz / lenfadenopati / organomegali -> hematoloji düşün.
-- Sadece sınırlı BT ekran görüntüsü -> kısıtlılık belirt, aşırı yorum yapma.
-
-Materyal sınırlı olsa bile boş dönme; yararlı, yapılandırılmış sonuç üret.
+Materyal sınırlı olsa bile boş dönme; yararlı ve yapılandırılmış sonuç üret.
 `;
 }
 
@@ -388,8 +522,18 @@ function buildUserContent(reportText, images, language) {
   const isEnglish = language === "en";
 
   const textBlock = isEnglish
-    ? `Medical content for analysis:\n\nReport text:\n${reportText || "(No report text provided)"}\n\nPlease analyze the medical content and return strict JSON only.`
-    : `Analiz için tıbbi içerik:\n\nRapor metni:\n${reportText || "(Rapor metni yok)"}\n\nLütfen tıbbi içeriği değerlendir ve yalnızca geçerli JSON döndür.`;
+    ? `Medical content for AI-assisted informational analysis:
+
+Report text:
+${reportText || "(No report text provided)"}
+
+Please analyze the medical content and return strict JSON only. Use medically cautious, non-diagnostic, non-prescriptive language.`
+    : `Yapay zekâ destekli bilgilendirme amaçlı analiz için tıbbi içerik:
+
+Rapor metni:
+${reportText || "(Rapor metni yok)"}
+
+Lütfen tıbbi içeriği değerlendir ve yalnızca geçerli JSON döndür. Tanı koymayan, tedavi reçetelemeyen, temkinli tıbbi dil kullan.`;
 
   const content = [{ type: "text", text: textBlock }];
 
@@ -447,7 +591,7 @@ app.post("/analyze", async (req, res) => {
 
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      temperature: 0.15,
+      temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -481,5 +625,5 @@ app.post("/analyze", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`CheckFinal backend running on port ${PORT}`);
+  console.log(⁠ CheckFinal backend running on port ${PORT} ⁠);
 });
