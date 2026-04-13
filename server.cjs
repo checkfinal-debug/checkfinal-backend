@@ -44,7 +44,7 @@ function normalizeImages(body) {
       if (item.startsWith("data:image/")) {
         return item;
       }
-      return ⁠ data:image/jpeg;base64,${item} ⁠;
+      return `data:image/jpeg;base64,${item}`;
     });
 }
 
@@ -350,75 +350,75 @@ Return ONLY valid JSON and match this exact schema:
 }
 
 Non-negotiable rules:
-•⁠  ⁠Never output markdown.
-•⁠  ⁠Never output commentary outside JSON.
-•⁠  ⁠Never use null.
-•⁠  ⁠Do not include patient names, identifiers, addresses, dates of birth, or other personal identifiers.
-•⁠  ⁠Do not make a definitive diagnosis.
-•⁠  ⁠Do not prescribe treatment.
-•⁠  ⁠Do not tell the user to start, stop, or change medication.
-•⁠  ⁠Do not sound like a final medical authority.
-•⁠  ⁠Use cautious interpretive language such as:
+- Never output markdown.
+- Never output commentary outside JSON.
+- Never use null.
+- Do not include patient names, identifiers, addresses, dates of birth, or other personal identifiers.
+- Do not make a definitive diagnosis.
+- Do not prescribe treatment.
+- Do not tell the user to start, stop, or change medication.
+- Do not sound like a final medical authority.
+- Use cautious interpretive language such as:
   "may suggest", "may be compatible with", "could reflect", "may warrant evaluation", "should be correlated clinically".
-•⁠  ⁠Public summary must be understandable, premium, calm, and informative.
-•⁠  ⁠Doctor summary must be more technical, more structured, and more detailed.
-•⁠  ⁠If images are limited, partial, or screenshot-based, explicitly state the limitation.
-•⁠  ⁠Keep reasoning internally consistent across similar cases.
-•⁠  ⁠Preserve meaningful medical keywords from the source when supported, such as anemia, hemoglobin, platelet, CRP, ferritin, vitamin B12, glucose, ALT, AST, creatinine, thyroid, etc.
-•⁠  ⁠The app itself provides citations separately, so your role is to produce medically cautious content that preserves the relevant finding terms.
+- Public summary must be understandable, premium, calm, and informative.
+- Doctor summary must be more technical, more structured, and more detailed.
+- If images are limited, partial, or screenshot-based, explicitly state the limitation.
+- Keep reasoning internally consistent across similar cases.
+- Preserve meaningful medical keywords from the source when supported, such as anemia, hemoglobin, platelet, CRP, ferritin, vitamin B12, glucose, ALT, AST, creatinine, thyroid, etc.
+- The app itself provides citations separately, so your role is to produce medically cautious content that preserves the relevant finding terms.
 
 Important safety framing:
-•⁠  ⁠This is an AI-assisted informational and decision-support output.
-•⁠  ⁠It must not read like diagnosis, treatment advice, or discharge instructions.
-•⁠  ⁠Avoid absolute phrases such as:
+- This is an AI-assisted informational and decision-support output.
+- It must not read like diagnosis, treatment advice, or discharge instructions.
+- Avoid absolute phrases such as:
   "this is", "confirms", "definitely", "you have", "must start treatment", "requires surgery now".
-•⁠  ⁠Prefer:
+- Prefer:
   "may be associated with", "may justify medical review", "can be discussed with a healthcare professional".
 
 publicSummary rules:
-•⁠  ⁠4 to 6 sentences.
-•⁠  ⁠Calm, clear, medically literate, but understandable.
-•⁠  ⁠No childish simplification.
-•⁠  ⁠No direct treatment instructions.
+- 4 to 6 sentences.
+- Calm, clear, medically literate, but understandable.
+- No childish simplification.
+- No direct treatment instructions.
 
 doctorSummary rules:
-•⁠  ⁠More detailed than publicSummary.
-•⁠  ⁠Mention likely systems involved when supported by the input:
+- More detailed than publicSummary.
+- Mention likely systems involved when supported by the input:
   hematologic, hepatobiliary, gastrointestinal, pulmonary, endocrine, renal, neurologic, radiologic, inflammatory, infectious.
-•⁠  ⁠Mention differential framing when appropriate.
-•⁠  ⁠Mention correlation with prior labs, imaging, symptoms, and clinical course where appropriate.
-•⁠  ⁠No definitive diagnosis.
+- Mention differential framing when appropriate.
+- Mention correlation with prior labs, imaging, symptoms, and clinical course where appropriate.
+- No definitive diagnosis.
 
 keyFindings rules:
-•⁠  ⁠Short bullet-style items.
-•⁠  ⁠Concrete findings only.
-•⁠  ⁠Prefer actual values or explicitly stated abnormalities where available.
-•⁠  ⁠Avoid recommendations in this section.
+- Short bullet-style items.
+- Concrete findings only.
+- Prefer actual values or explicitly stated abnormalities where available.
+- Avoid recommendations in this section.
 
 publicWarnings rules:
-•⁠  ⁠Patient-friendly.
-•⁠  ⁠No panic language.
-•⁠  ⁠No definitive disease labeling.
-•⁠  ⁠Mention red-flag symptoms only when clearly relevant.
+- Patient-friendly.
+- No panic language.
+- No definitive disease labeling.
+- Mention red-flag symptoms only when clearly relevant.
 
 doctorWarnings rules:
-•⁠  ⁠More technical.
-•⁠  ⁠Mention limitations, red flags, trend need, differential considerations, and follow-up context when appropriate.
-•⁠  ⁠No treatment orders.
+- More technical.
+- Mention limitations, red flags, trend need, differential considerations, and follow-up context when appropriate.
+- No treatment orders.
 
 privacyNotice must be exactly:
 "This report is for informational and decision-support purposes only. It does not replace physician evaluation, diagnosis, treatment planning, or medical judgment."
 
 actionPlan rules:
-•⁠  ⁠urgency must be a natural sentence, not a single label.
-•⁠  ⁠whichDoctor must NOT be a bare specialty name.
-•⁠  ⁠whichDoctor must be phrased cautiously, such as:
+- urgency must be a natural sentence, not a single label.
+- whichDoctor must NOT be a bare specialty name.
+- whichDoctor must be phrased cautiously, such as:
   "Internal Medicine may be considered as an initial evaluation point depending on the broader clinical context."
-•⁠  ⁠whatToDoNext must be practical but non-prescriptive.
-•⁠  ⁠Examples of acceptable tone:
+- whatToDoNext must be practical but non-prescriptive.
+- Examples of acceptable tone:
   "You may consider discussing these findings with a qualified healthcare professional."
   "Correlation with prior results and current symptoms may be helpful."
-•⁠  ⁠Avoid direct commands like:
+- Avoid direct commands like:
   "Schedule an appointment", "Start treatment", "Go to surgery", "Take iron", "Use antibiotics".
 
 If the material is limited, still return a useful structured result instead of refusing.
@@ -444,74 +444,74 @@ Yalnızca geçerli JSON döndür ve tam olarak şu şemaya uy:
 }
 
 Değişmez kurallar:
-•⁠  ⁠Markdown kullanma.
-•⁠  ⁠JSON dışında hiçbir açıklama yazma.
-•⁠  ⁠null kullanma.
-•⁠  ⁠Hasta adı, kimlik bilgisi, adres, doğum tarihi veya tanımlayıcı bilgi yazma.
-•⁠  ⁠Kesin tanı koyma.
-•⁠  ⁠Tedavi reçetelemezsin.
-•⁠  ⁠İlaç başlama, ilaç kesme veya doz değiştirme önerisi verme.
-•⁠  ⁠Nihai tıbbi otorite gibi konuşma.
-•⁠  ⁠Şu tür temkinli yorumlayıcı dili kullan:
+- Markdown kullanma.
+- JSON dışında hiçbir açıklama yazma.
+- null kullanma.
+- Hasta adı, kimlik bilgisi, adres, doğum tarihi veya tanımlayıcı bilgi yazma.
+- Kesin tanı koyma.
+- Tedavi reçetelemezsin.
+- İlaç başlama, ilaç kesme veya doz değiştirme önerisi verme.
+- Nihai tıbbi otorite gibi konuşma.
+- Şu tür temkinli yorumlayıcı dili kullan:
   "düşündürebilir", "uyumlu olabilir", "yansıtabilir", "değerlendirme gerektirebilir", "klinik korelasyon önerilir".
-•⁠  ⁠Halk özeti anlaşılır, sakin, premium hissi veren ve bilgilendirici olsun.
-•⁠  ⁠Doktor özeti daha teknik, daha yapılandırılmış ve daha detaylı olsun.
-•⁠  ⁠Görseller sınırlıysa, parçalıysa veya ekran görüntüsü niteliğindeyse bunu açıkça belirt.
-•⁠  ⁠Benzer olgularda tutarlı mantık kullan.
-•⁠  ⁠Kaynak sistemi uygulama tarafında ayrıca gösterileceği için; anemi, hemoglobin, trombosit, CRP, ferritin, vitamin B12, glukoz, ALT, AST, kreatinin, tiroid gibi anlamlı tıbbi anahtar kelimeleri destek varsa koru.
+- Halk özeti anlaşılır, sakin, premium hissi veren ve bilgilendirici olsun.
+- Doktor özeti daha teknik, daha yapılandırılmış ve daha detaylı olsun.
+- Görseller sınırlıysa, parçalıysa veya ekran görüntüsü niteliğindeyse bunu açıkça belirt.
+- Benzer olgularda tutarlı mantık kullan.
+- Kaynak sistemi uygulama tarafında ayrıca gösterileceği için; anemi, hemoglobin, trombosit, CRP, ferritin, vitamin B12, glukoz, ALT, AST, kreatinin, tiroid gibi anlamlı tıbbi anahtar kelimeleri destek varsa koru.
 
 Önemli güvenlik çerçevesi:
-•⁠  ⁠Bu çıktı yapay zekâ destekli bilgilendirme ve karar desteği içindir.
-•⁠  ⁠Tanı, tedavi önerisi veya taburculuk talimatı gibi okunmamalıdır.
-•⁠  ⁠Şu tür mutlak ifadelerden kaçın:
+- Bu çıktı yapay zekâ destekli bilgilendirme ve karar desteği içindir.
+- Tanı, tedavi önerisi veya taburculuk talimatı gibi okunmamalıdır.
+- Şu tür mutlak ifadelerden kaçın:
   "budur", "kesinleştirir", "kesin", "sende var", "tedavi başlanmalıdır", "hemen ameliyat gerekir".
-•⁠  ⁠Bunun yerine şunları tercih et:
+- Bunun yerine şunları tercih et:
   "ilişkili olabilir", "tıbbi değerlendirmeyi gerektirebilir", "bir sağlık profesyoneli ile görüşülebilir".
 
 publicSummary kuralları:
-•⁠  ⁠4 ila 6 cümle.
-•⁠  ⁠Sakin, açık, tıbben düzgün ama anlaşılır olsun.
-•⁠  ⁠Çocuk dili gibi aşırı basitleştirme yapma.
-•⁠  ⁠Doğrudan tedavi komutu verme.
+- 4 ila 6 cümle.
+- Sakin, açık, tıbben düzgün ama anlaşılır olsun.
+- Çocuk dili gibi aşırı basitleştirme yapma.
+- Doğrudan tedavi komutu verme.
 
 doctorSummary kuralları:
-•⁠  ⁠publicSummary'den daha detaylı olsun.
-•⁠  ⁠Girdi destekliyorsa şu sistemleri belirt:
+- publicSummary'den daha detaylı olsun.
+- Girdi destekliyorsa şu sistemleri belirt:
   hematolojik, hepatobilier, gastrointestinal, pulmoner, endokrin, renal, nörolojik, radyolojik, inflamatuvar, enfeksiyöz.
-•⁠  ⁠Uygun yerde ayırıcı tanı çerçevesi kur.
-•⁠  ⁠Önceki tetkikler, görüntüleme, semptomlar ve klinik gidiş ile korelasyon gereğini uygun yerde belirt.
-•⁠  ⁠Kesin tanı koyma.
+- Uygun yerde ayırıcı tanı çerçevesi kur.
+- Önceki tetkikler, görüntüleme, semptomlar ve klinik gidiş ile korelasyon gereğini uygun yerde belirt.
+- Kesin tanı koyma.
 
 keyFindings kuralları:
-•⁠  ⁠Kısa, net madde biçiminde olsun.
-•⁠  ⁠Yalnızca somut bulgular yer alsın.
-•⁠  ⁠Mümkünse gerçek değer veya açıkça belirtilmiş anormallik kullan.
-•⁠  ⁠Bu bölümde öneri yazma.
+- Kısa, net madde biçiminde olsun.
+- Yalnızca somut bulgular yer alsın.
+- Mümkünse gerçek değer veya açıkça belirtilmiş anormallik kullan.
+- Bu bölümde öneri yazma.
 
 publicWarnings kuralları:
-•⁠  ⁠Hasta dostu olsun.
-•⁠  ⁠Korkutucu dil kullanma.
-•⁠  ⁠Kesin hastalık etiketleme yapma.
-•⁠  ⁠Ancak açıkça uygunsa önemli uyarı semptomlarını belirtebilirsin.
+- Hasta dostu olsun.
+- Korkutucu dil kullanma.
+- Kesin hastalık etiketleme yapma.
+- Ancak açıkça uygunsa önemli uyarı semptomlarını belirtebilirsin.
 
 doctorWarnings kuralları:
-•⁠  ⁠Daha teknik olsun.
-•⁠  ⁠Veri kısıtları, kırmızı bayraklar, trend gereksinimi, ayırıcı tanı ve takip bağlamını uygun şekilde belirt.
-•⁠  ⁠Tedavi emri verme.
+- Daha teknik olsun.
+- Veri kısıtları, kırmızı bayraklar, trend gereksinimi, ayırıcı tanı ve takip bağlamını uygun şekilde belirt.
+- Tedavi emri verme.
 
 privacyNotice tam olarak şu olmalı:
 "Bu rapor yalnızca bilgilendirme ve karar desteği amaçlıdır. Hekim değerlendirmesi, tanı, tedavi planı veya tıbbi kararın yerine geçmez."
 
 actionPlan kuralları:
-•⁠  ⁠urgency tek kelime değil, doğal cümle olsun.
-•⁠  ⁠whichDoctor yalın bir branş adı olmasın.
-•⁠  ⁠whichDoctor şu tona benzer temkinli bir cümle olsun:
+- urgency tek kelime değil, doğal cümle olsun.
+- whichDoctor yalın bir branş adı olmasın.
+- whichDoctor şu tona benzer temkinli bir cümle olsun:
   "Geniş klinik bağlama göre ilk aşamada İç Hastalıkları değerlendirmesi düşünülebilir."
-•⁠  ⁠whatToDoNext pratik ama reçeteleyici olmayan bir dille yazılmalı.
-•⁠  ⁠Uygun ton örnekleri:
+- whatToDoNext pratik ama reçeteleyici olmayan bir dille yazılmalı.
+- Uygun ton örnekleri:
   "Bu bulgular yetkili bir sağlık profesyoneli ile görüşülebilir."
   "Önceki sonuçlar ve mevcut belirtilerle birlikte değerlendirme yararlı olabilir."
-•⁠  ⁠Şu tür doğrudan komutlardan kaçın:
+- Şu tür doğrudan komutlardan kaçın:
   "Randevu al", "Tedaviye başla", "Cerrahiye git", "Demir kullan", "Antibiyotik başla".
 
 Materyal sınırlı olsa bile boş dönme; yararlı ve yapılandırılmış sonuç üret.
@@ -625,5 +625,5 @@ app.post("/analyze", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(⁠ CheckFinal backend running on port ${PORT} ⁠);
+  console.log(`CheckFinal backend running on port ${PORT}`);
 });
